@@ -1,0 +1,183 @@
+export type ClaimStatus =
+  | "new"
+  | "waiting_customer_docs"
+  | "waiting_insurance"
+  | "in_review"
+  | "approved"
+  | "rejected"
+  | "closed";
+
+export type ClaimType =
+  | "car"
+  | "health"
+  | "life"
+  | "property"
+  | "travel"
+  | "other";
+
+export interface Customer {
+  id: string;
+  full_name: string;
+  id_number: string;
+  phone: string;
+  email: string;
+  address: string;
+  created_at: string;
+  agent_id: string;
+}
+
+export interface Claim {
+  id: string;
+  claim_number: string;
+  customer_id: string;
+  agent_id: string;
+  type: ClaimType;
+  status: ClaimStatus;
+  title: string;
+  description: string;
+  insurance_company: string;
+  policy_number: string;
+  incident_date: string;
+  claim_amount: number | null;
+  approved_amount: number | null;
+  created_at: string;
+  updated_at: string;
+  customer?: Customer;
+}
+
+export interface ClaimDocument {
+  id: string;
+  claim_id: string;
+  name: string;
+  file_url: string;
+  file_type: string;
+  uploaded_at: string;
+  uploaded_by: string;
+}
+
+export interface MissingDocument {
+  id: string;
+  claim_id: string;
+  name: string;
+  description: string;
+  is_received: boolean;
+  created_at: string;
+}
+
+export interface ClaimNote {
+  id: string;
+  claim_id: string;
+  author_id: string;
+  content: string;
+  created_at: string;
+}
+
+export interface ActivityEvent {
+  id: string;
+  claim_id: string;
+  type: "status_change" | "note_added" | "document_uploaded" | "document_requested" | "claim_created" | "amount_updated";
+  description: string;
+  created_at: string;
+  actor_id: string;
+}
+
+export const CLAIM_STATUS_LABELS: Record<ClaimStatus, string> = {
+  new: "חדשה",
+  waiting_customer_docs: "ממתין למסמכי לקוח",
+  waiting_insurance: "ממתין לחברת ביטוח",
+  in_review: "בבדיקה",
+  approved: "אושרה",
+  rejected: "נדחתה",
+  closed: "סגורה",
+};
+
+export const CLAIM_STATUS_COLORS: Record<ClaimStatus, string> = {
+  new: "bg-blue-100 text-blue-800",
+  waiting_customer_docs: "bg-yellow-100 text-yellow-800",
+  waiting_insurance: "bg-orange-100 text-orange-800",
+  in_review: "bg-purple-100 text-purple-800",
+  approved: "bg-green-100 text-green-800",
+  rejected: "bg-red-100 text-red-800",
+  closed: "bg-gray-100 text-gray-800",
+};
+
+export const CLAIM_TYPE_LABELS: Record<ClaimType, string> = {
+  car: "ביטוח רכב",
+  health: "ביטוח בריאות",
+  life: "ביטוח חיים",
+  property: "ביטוח רכוש",
+  travel: "ביטוח נסיעות",
+  other: "אחר",
+};
+
+// --- Intake Conversation Types ---
+
+export interface CarAccidentIntakeData {
+  event_date: string;
+  event_time: string;
+  event_location: string;
+  description: string;
+  plate_number: string;
+  policy_number: string;
+  has_injuries: boolean | null;
+  injury_details: string;
+  other_vehicle_involved: boolean | null;
+  third_party_name: string;
+  third_party_phone: string;
+  third_party_plate: string;
+  third_party_insurance: string;
+  photos_uploaded: string[];
+  driver_license_uploaded: boolean;
+  vehicle_license_uploaded: boolean;
+  police_report_uploaded: boolean;
+  police_report_needed: boolean | null;
+}
+
+export interface IntakeMessage {
+  id: string;
+  sender: "bot" | "customer";
+  text: string;
+  timestamp: string;
+  type: "text" | "file_upload" | "options";
+  options?: string[];
+  file_name?: string;
+}
+
+export type IntakeStep =
+  | "greeting"
+  | "event_date"
+  | "event_time"
+  | "event_location"
+  | "description"
+  | "plate_number"
+  | "policy_number"
+  | "injuries"
+  | "injury_details"
+  | "other_vehicle"
+  | "third_party_name"
+  | "third_party_phone"
+  | "third_party_plate"
+  | "third_party_insurance"
+  | "photos"
+  | "driver_license"
+  | "vehicle_license"
+  | "police_report_ask"
+  | "police_report_upload"
+  | "summary"
+  | "complete";
+
+export interface IntakeClaim {
+  id: string;
+  claim_number: string;
+  customer_name: string;
+  customer_phone: string;
+  intake_data: CarAccidentIntakeData;
+  messages: IntakeMessage[];
+  readiness_score: number;
+  missing_fields: string[];
+  missing_documents: string[];
+  ai_summary: string;
+  ai_inspector_message: string;
+  status: "intake" | "ready_for_review" | "approved_by_agent" | "sent_to_inspector";
+  created_at: string;
+}
