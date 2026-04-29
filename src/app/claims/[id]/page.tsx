@@ -24,6 +24,9 @@ import {
   Copy,
   Check,
   Zap,
+  ChevronDown,
+  ChevronUp,
+  CalendarClock,
 } from "lucide-react";
 import {
   getClaimById,
@@ -33,25 +36,14 @@ import {
   getClaimActivities,
   generateClaimAISummary,
   generateClaimInspectorMessage,
+  generateOneLineSummary,
+  generateMissingDocsRequest,
+  generateFollowUpMessage,
   getClaimNextAction,
 } from "@/lib/mock-data";
 import type { NextActionSeverity } from "@/lib/mock-data";
-import {
-  ClaimStatus,
-  CLAIM_STATUS_LABELS,
-  CLAIM_STATUS_COLORS,
-  CLAIM_TYPE_LABELS,
-} from "@/types";
 import StatusBadge from "@/components/ui/StatusBadge";
 import ClaimTypeBadge from "@/components/ui/ClaimTypeBadge";
-
-const STATUS_FLOW: ClaimStatus[] = [
-  "new",
-  "waiting_customer_docs",
-  "waiting_insurance",
-  "in_review",
-  "approved",
-];
 
 export default function ClaimDetailPage({
   params,
@@ -67,10 +59,11 @@ export default function ClaimDetailPage({
 
   const [newNote, setNewNote] = useState("");
   const [activeTab, setActiveTab] = useState<"details" | "documents" | "notes" | "timeline">("details");
-  const [showInspectorModal, setShowInspectorModal] = useState(false);
-  const [inspectorMessage, setInspectorMessage] = useState("");
+  const [showActionModal, setShowActionModal] = useState(false);
+  const [actionModalContent, setActionModalContent] = useState({ title: "", message: "", icon: "send" as "send" | "docs" | "followup" });
   const [copiedMessage, setCopiedMessage] = useState(false);
-  const [sentToInspector, setSentToInspector] = useState(false);
+  const [actionDone, setActionDone] = useState(false);
+  const [showFullSummary, setShowFullSummary] = useState(false);
 
   if (!claim) {
     return (
@@ -84,190 +77,199 @@ export default function ClaimDetailPage({
     );
   }
 
-  const currentStepIndex = STATUS_FLOW.indexOf(claim.status);
-  const aiSummary = generateClaimAISummary(claim);
   const nextAction = getClaimNextAction(claim);
+  const oneLineSummary = generateOneLineSummary(claim);
+  const missingNotReceived = missingDocs.filter((d) => !d.is_received);
 
-  const handleGenerateInspectorMessage = () => {
-    setInspectorMessage(generateClaimInspectorMessage(claim));
-    setShowInspectorModal(true);
+  // Determine what the primary action button does
+  const handlePrimaryAction = () => {
+    if (claim.status === "new" || claim.status === "waiting_customer_docs") {
+      if (missingNotReceived.length > 0) {
+        // Missing docs → generate request message
+        setActionModalContent({
+          title: "בקשת מסמכים מהלקוח",
+          message: generateMissingDocsRequest(claim),
+          icon: "docs",
+        });
+      } else {
+        // Ready → generate inspector message
+        setActionModalContent({
+          title: "הודעה למפקח חברת הביטוח",
+          message: generateClaimInspectorMessage(claim),
+          icon: "send",
+        });
+      }
+    } else if (claim.status === "waiting_insurance" || claim.status === "in_review") {
+      // Waiting → follow-up
+      setActionModalContent({
+        title: "מעקב מול חברת הביטוח",
+        message: generateFollowUpMessage(claim),
+        icon: "followup",
+      });
+    } else if (claim.status === "approved") {
+      setActionModalContent({
+        title: "עדכון ללקוח — תביעה אושרה",
+        message: `שלום ${claim.customer?.full_name || ""},\n\nשמחים לעדכן שהתביעה שלך (${claim.claim_number}) אושרה!\n${claim.approved_amount ? `סכום מאושר: ₪${claim.approved_amount.toLocaleString()}` : ""}\n\nהסוכן שלך יחזור אליך עם פרטים נוספים.\n\nבברכה,\nClaimPilot`,
+        icon: "send",
+      });
+    } else if (claim.status === "rejected") {
+      setActionModalContent({
+        title: "עדכון ללקוח — תביעה נדחתה",
+        message: `שלום ${claim.customer?.full_name || ""},\n\nלצערנו, התביעה (${claim.claim_number}) נדחתה על ידי ${claim.insurance_company}.\n\nהסוכן שלך ייצור איתך קשר לבחינת אפשרויות ערעור.\n\nבברכה,\nClaimPilot`,
+        icon: "send",
+      });
+    } else {
+      return; // closed — no action
+    }
+    setShowActionModal(true);
+    setCopiedMessage(false);
   };
 
-  const handleCopyMessage = () => {
-    navigator.clipboard.writeText(inspectorMessage);
+  const handleCopy = () => {
+    navigator.clipboard.writeText(actionModalContent.message);
     setCopiedMessage(true);
     setTimeout(() => setCopiedMessage(false), 2000);
   };
 
-  const handleMarkSent = () => {
-    setSentToInspector(true);
-    setShowInspectorModal(false);
+  const handleMarkDone = () => {
+    setActionDone(true);
+    setShowActionModal(false);
   };
 
-  const SEVERITY_STYLES: Record<NextActionSeverity, { bg: string; border: string; text: string; badge: string }> = {
-    red: { bg: "bg-red-50", border: "border-red-200", text: "text-red-800", badge: "bg-red-600 text-white" },
-    yellow: { bg: "bg-amber-50", border: "border-amber-200", text: "text-amber-800", badge: "bg-amber-500 text-white" },
-    green: { bg: "bg-green-50", border: "border-green-200", text: "text-green-800", badge: "bg-green-600 text-white" },
+  const SEVERITY_STYLES: Record<NextActionSeverity, { bg: string; border: string; text: string; icon: string; glow: string }> = {
+    red: { bg: "bg-gradient-to-l from-red-50 to-red-100", border: "border-red-200", text: "text-red-800", icon: "bg-red-600", glow: "shadow-red-100" },
+    yellow: { bg: "bg-gradient-to-l from-amber-50 to-amber-100", border: "border-amber-200", text: "text-amber-800", icon: "bg-amber-500", glow: "shadow-amber-100" },
+    green: { bg: "bg-gradient-to-l from-green-50 to-green-100", border: "border-green-200", text: "text-green-800", icon: "bg-green-600", glow: "shadow-green-100" },
   };
 
-  const SEVERITY_LABELS: Record<NextActionSeverity, string> = {
-    red: "דורש טיפול",
-    yellow: "ממתין",
-    green: "מוכן / הושלם",
+  const PRIMARY_BUTTON_LABELS: Record<string, string> = {
+    new: missingNotReceived.length > 0 ? "בקש מסמכים מהלקוח" : "שלח למפקח",
+    waiting_customer_docs: "בקש מסמכים מהלקוח",
+    waiting_insurance: "שלח מעקב לחברת הביטוח",
+    in_review: "שלח מעקב לחברת הביטוח",
+    approved: "עדכן את הלקוח",
+    rejected: "עדכן את הלקוח",
+    closed: "הטיפול הושלם",
   };
 
   return (
     <div>
-      {/* Header */}
-      <div className="flex items-start justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <Link
-            href="/claims"
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-          >
-            <ArrowRight className="w-5 h-5 text-gray-600" />
-          </Link>
-          <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold text-gray-900">
-                {claim.title}
-              </h1>
-              <StatusBadge status={claim.status} />
-            </div>
-            <div className="flex items-center gap-3 mt-1 text-sm text-gray-500">
-              <span className="font-mono">{claim.claim_number}</span>
-              <span>•</span>
-              <ClaimTypeBadge type={claim.type} />
-              <span>•</span>
-              <span>
-                נוצרה {new Date(claim.created_at).toLocaleDateString("he-IL")}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <select
-          defaultValue={claim.status}
-          className="px-4 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+      {/* Minimal Header */}
+      <div className="flex items-center gap-3 mb-5">
+        <Link
+          href="/claims"
+          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
         >
-          {Object.entries(CLAIM_STATUS_LABELS).map(([key, label]) => (
-            <option key={key} value={key}>
-              {label}
-            </option>
-          ))}
-        </select>
+          <ArrowRight className="w-5 h-5 text-gray-600" />
+        </Link>
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-mono text-gray-400">{claim.claim_number}</span>
+          <ClaimTypeBadge type={claim.type} />
+          <StatusBadge status={claim.status} />
+        </div>
       </div>
 
-      {/* Status Progress */}
-      {claim.status !== "rejected" && claim.status !== "closed" && (
-        <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
-          <div className="flex items-center justify-between">
-            {STATUS_FLOW.map((status, index) => {
-              const isCompleted = index < currentStepIndex;
-              const isCurrent = index === currentStepIndex;
-              return (
-                <div key={status} className="flex items-center flex-1">
-                  <div className="flex flex-col items-center">
-                    <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
-                        isCompleted
-                          ? "bg-green-500 text-white"
-                          : isCurrent
-                          ? "bg-blue-600 text-white"
-                          : "bg-gray-200 text-gray-500"
-                      }`}
-                    >
-                      {isCompleted ? (
-                        <CheckCircle2 className="w-5 h-5" />
-                      ) : (
-                        index + 1
-                      )}
-                    </div>
-                    <span
-                      className={`text-xs mt-1.5 ${
-                        isCurrent
-                          ? "text-blue-600 font-medium"
-                          : "text-gray-500"
-                      }`}
-                    >
-                      {CLAIM_STATUS_LABELS[status]}
-                    </span>
-                  </div>
-                  {index < STATUS_FLOW.length - 1 && (
-                    <div
-                      className={`flex-1 h-0.5 mx-2 ${
-                        isCompleted ? "bg-green-500" : "bg-gray-200"
-                      }`}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
+      {/* ===== CONTROL CARD — The Hero ===== */}
+      <div className={`${SEVERITY_STYLES[nextAction.severity].bg} ${SEVERITY_STYLES[nextAction.severity].border} border rounded-2xl p-6 mb-6 shadow-lg ${SEVERITY_STYLES[nextAction.severity].glow}`}>
+        {/* One-line AI Summary */}
+        <div className="flex items-center gap-2 mb-4">
+          <Sparkles className="w-4 h-4 text-purple-500" />
+          <p className="text-sm text-gray-700 font-medium">{oneLineSummary}</p>
         </div>
-      )}
 
-      {/* Next Action Banner */}
-      <div className={`${SEVERITY_STYLES[nextAction.severity].bg} ${SEVERITY_STYLES[nextAction.severity].border} border rounded-xl p-4 mb-6`}>
+        {/* Action Area */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Zap className={`w-5 h-5 ${SEVERITY_STYLES[nextAction.severity].text}`} />
-            <div>
-              <div className="flex items-center gap-2">
-                <span className={`text-sm font-bold ${SEVERITY_STYLES[nextAction.severity].text}`}>
-                  פעולה הבאה:
-                </span>
-                <span className={`text-sm font-semibold ${SEVERITY_STYLES[nextAction.severity].text}`}>
-                  {nextAction.text}
-                </span>
+          <div className="flex-1">
+            <div className="flex items-center gap-3 mb-1">
+              <div className={`w-8 h-8 ${SEVERITY_STYLES[nextAction.severity].icon} rounded-full flex items-center justify-center`}>
+                <Zap className="w-4 h-4 text-white" />
               </div>
-              <p className={`text-xs mt-0.5 ${SEVERITY_STYLES[nextAction.severity].text} opacity-75`}>
-                {nextAction.description}
+              <h2 className={`text-lg font-bold ${SEVERITY_STYLES[nextAction.severity].text}`}>
+                {nextAction.text}
+              </h2>
+            </div>
+            <p className={`text-sm mr-11 ${SEVERITY_STYLES[nextAction.severity].text} opacity-75`}>
+              {nextAction.description}
+            </p>
+          </div>
+
+          {/* Primary CTA */}
+          {claim.status !== "closed" && !actionDone && (
+            <button
+              onClick={handlePrimaryAction}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-xl transition-all shadow-md hover:shadow-lg text-sm flex items-center gap-2 whitespace-nowrap"
+            >
+              <Send className="w-4 h-4" />
+              {PRIMARY_BUTTON_LABELS[claim.status]}
+            </button>
+          )}
+
+          {actionDone && (
+            <div className="bg-green-600 text-white font-bold py-3 px-8 rounded-xl text-sm flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4" />
+              בוצע
+            </div>
+          )}
+        </div>
+
+        {/* Quick info chips */}
+        <div className="flex items-center gap-3 mt-4 mr-11">
+          <span className="inline-flex items-center gap-1.5 text-xs bg-white/60 backdrop-blur-sm px-3 py-1.5 rounded-full text-gray-600">
+            <User className="w-3 h-3" />
+            {claim.customer?.full_name || "—"}
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-xs bg-white/60 backdrop-blur-sm px-3 py-1.5 rounded-full text-gray-600">
+            <Building2 className="w-3 h-3" />
+            {claim.insurance_company}
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-xs bg-white/60 backdrop-blur-sm px-3 py-1.5 rounded-full text-gray-600">
+            <Calendar className="w-3 h-3" />
+            {new Date(claim.incident_date).toLocaleDateString("he-IL")}
+          </span>
+          {claim.claim_amount && (
+            <span className="inline-flex items-center gap-1.5 text-xs bg-white/60 backdrop-blur-sm px-3 py-1.5 rounded-full text-gray-600">
+              <DollarSign className="w-3 h-3" />
+              ₪{claim.claim_amount.toLocaleString()}
+            </span>
+          )}
+          {missingNotReceived.length > 0 && (
+            <span className="inline-flex items-center gap-1.5 text-xs bg-red-100 px-3 py-1.5 rounded-full text-red-700 font-medium">
+              <AlertTriangle className="w-3 h-3" />
+              {missingNotReceived.length} מסמכים חסרים
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Full AI Summary (Collapsible) */}
+      <div className="bg-white rounded-xl border border-gray-200 mb-6">
+        <button
+          onClick={() => setShowFullSummary(!showFullSummary)}
+          className="w-full flex items-center justify-between px-5 py-3 hover:bg-gray-50 transition-colors rounded-xl"
+        >
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-purple-500" />
+            <span className="text-sm font-medium text-gray-700">סיכום מלא</span>
+            <span className="text-xs text-gray-400">ClaimPilot AI</span>
+          </div>
+          {showFullSummary ? (
+            <ChevronUp className="w-4 h-4 text-gray-400" />
+          ) : (
+            <ChevronDown className="w-4 h-4 text-gray-400" />
+          )}
+        </button>
+        {showFullSummary && (
+          <div className="px-5 pb-4">
+            <div className="bg-gradient-to-br from-purple-50 to-blue-50 border border-purple-100 rounded-lg p-4">
+              <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-line">
+                {generateClaimAISummary(claim)}
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <span className={`text-xs font-bold px-3 py-1 rounded-full ${SEVERITY_STYLES[nextAction.severity].badge}`}>
-              {SEVERITY_LABELS[nextAction.severity]}
-            </span>
-            {!sentToInspector && claim.status !== "closed" && (
-              <button
-                onClick={handleGenerateInspectorMessage}
-                className="text-sm bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors font-medium inline-flex items-center gap-2"
-              >
-                <Building2 className="w-4 h-4" />
-                צור הודעה למפקח
-              </button>
-            )}
-            {sentToInspector && (
-              <span className="text-sm text-purple-700 bg-purple-100 px-3 py-1.5 rounded-lg font-medium inline-flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4" />
-                נשלח למפקח
-              </span>
-            )}
-          </div>
-        </div>
+        )}
       </div>
 
-      {/* AI Claim Summary Card */}
-      <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
-            <Sparkles className="w-4 h-4 text-purple-600" />
-          </div>
-          <h3 className="text-base font-semibold text-gray-900">
-            סיכום תביעה אוטומטי
-          </h3>
-          <span className="text-xs text-gray-400 mr-auto">נוצר ע״י ClaimPilot AI</span>
-        </div>
-        <div className="bg-gradient-to-br from-purple-50 to-blue-50 border border-purple-100 rounded-lg p-4">
-          <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-line">
-            {aiSummary}
-          </p>
-        </div>
-      </div>
-
-      {/* Tabs */}
+      {/* Tabs — Secondary Data */}
       <div className="border-b border-gray-200 mb-6">
         <nav className="flex gap-6">
           {[
@@ -300,9 +302,7 @@ export default function ClaimDetailPage({
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Claim Info */}
           <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <h3 className="text-base font-semibold text-gray-900 mb-4">
-              פרטי תביעה
-            </h3>
+            <h3 className="text-base font-semibold text-gray-900 mb-4">פרטי תביעה</h3>
             <div className="space-y-3">
               <InfoRow icon={Building2} label="חברת ביטוח" value={claim.insurance_company} />
               <InfoRow icon={Hash} label="מספר פוליסה" value={claim.policy_number} />
@@ -326,9 +326,7 @@ export default function ClaimDetailPage({
             </div>
             <div className="mt-4 pt-4 border-t border-gray-100">
               <p className="text-sm font-medium text-gray-700 mb-2">תיאור</p>
-              <p className="text-sm text-gray-600 leading-relaxed">
-                {claim.description}
-              </p>
+              <p className="text-sm text-gray-600 leading-relaxed">{claim.description}</p>
             </div>
           </div>
 
@@ -336,9 +334,7 @@ export default function ClaimDetailPage({
           {claim.customer && (
             <div className="bg-white rounded-xl border border-gray-200 p-5">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-base font-semibold text-gray-900">
-                  פרטי לקוח
-                </h3>
+                <h3 className="text-base font-semibold text-gray-900">פרטי לקוח</h3>
                 <Link
                   href={`/customers/${claim.customer_id}`}
                   className="text-sm text-blue-600 hover:text-blue-700"
@@ -361,7 +357,7 @@ export default function ClaimDetailPage({
             <div className="bg-white rounded-xl border border-gray-200 p-5 lg:col-span-2">
               <h3 className="text-base font-semibold text-gray-900 mb-4 flex items-center gap-2">
                 <AlertTriangle className="w-5 h-5 text-amber-500" />
-                מסמכים חסרים ({missingDocs.filter((d) => !d.is_received).length})
+                מסמכים חסרים ({missingNotReceived.length})
               </h3>
               <div className="space-y-3">
                 {missingDocs.map((doc) => (
@@ -377,18 +373,10 @@ export default function ClaimDetailPage({
                       <Circle className="w-5 h-5 text-amber-500 mt-0.5 shrink-0" />
                     )}
                     <div>
-                      <p
-                        className={`text-sm font-medium ${
-                          doc.is_received ? "text-green-800" : "text-amber-800"
-                        }`}
-                      >
+                      <p className={`text-sm font-medium ${doc.is_received ? "text-green-800" : "text-amber-800"}`}>
                         {doc.name}
                       </p>
-                      <p
-                        className={`text-xs mt-0.5 ${
-                          doc.is_received ? "text-green-600" : "text-amber-600"
-                        }`}
-                      >
+                      <p className={`text-xs mt-0.5 ${doc.is_received ? "text-green-600" : "text-amber-600"}`}>
                         {doc.description}
                       </p>
                     </div>
@@ -426,18 +414,13 @@ export default function ClaimDetailPage({
                       <FileText className="w-5 h-5 text-blue-600" />
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-gray-900">
-                        {doc.name}
-                      </p>
+                      <p className="text-sm font-medium text-gray-900">{doc.name}</p>
                       <p className="text-xs text-gray-500">
-                        {new Date(doc.uploaded_at).toLocaleDateString("he-IL")} •{" "}
-                        {doc.file_type}
+                        {new Date(doc.uploaded_at).toLocaleDateString("he-IL")} • {doc.file_type}
                       </p>
                     </div>
                   </div>
-                  <button className="text-sm text-blue-600 hover:text-blue-700 font-medium">
-                    הורדה
-                  </button>
+                  <button className="text-sm text-blue-600 hover:text-blue-700 font-medium">הורדה</button>
                 </div>
               ))}
             </div>
@@ -447,11 +430,7 @@ export default function ClaimDetailPage({
 
       {activeTab === "notes" && (
         <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h3 className="text-base font-semibold text-gray-900 mb-5">
-            הערות פנימיות
-          </h3>
-
-          {/* Add Note */}
+          <h3 className="text-base font-semibold text-gray-900 mb-5">הערות פנימיות</h3>
           <div className="mb-6">
             <div className="flex gap-3">
               <textarea
@@ -470,25 +449,16 @@ export default function ClaimDetailPage({
               </button>
             </div>
           </div>
-
-          {/* Notes List */}
           <div className="space-y-4">
             {notes.map((note) => (
-              <div
-                key={note.id}
-                className="p-4 bg-gray-50 rounded-lg border border-gray-100"
-              >
+              <div key={note.id} className="p-4 bg-gray-50 rounded-lg border border-gray-100">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-900">
-                    סוכן ביטוח
-                  </span>
+                  <span className="text-sm font-medium text-gray-900">סוכן ביטוח</span>
                   <span className="text-xs text-gray-500">
                     {new Date(note.created_at).toLocaleString("he-IL")}
                   </span>
                 </div>
-                <p className="text-sm text-gray-700 leading-relaxed">
-                  {note.content}
-                </p>
+                <p className="text-sm text-gray-700 leading-relaxed">{note.content}</p>
               </div>
             ))}
             {notes.length === 0 && (
@@ -500,9 +470,7 @@ export default function ClaimDetailPage({
 
       {activeTab === "timeline" && (
         <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h3 className="text-base font-semibold text-gray-900 mb-5">
-            ציר זמן
-          </h3>
+          <h3 className="text-base font-semibold text-gray-900 mb-5">ציר זמן</h3>
           <div className="relative">
             <div className="absolute right-4 top-0 bottom-0 w-0.5 bg-gray-200" />
             <div className="space-y-6">
@@ -510,9 +478,7 @@ export default function ClaimDetailPage({
                 <div key={event.id} className="flex gap-4 relative">
                   <div
                     className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 z-10 ${
-                      index === 0
-                        ? "bg-blue-100 text-blue-600"
-                        : "bg-gray-100 text-gray-500"
+                      index === 0 ? "bg-blue-100 text-blue-600" : "bg-gray-100 text-gray-500"
                     }`}
                   >
                     {event.type === "status_change" && <Clock className="w-4 h-4" />}
@@ -535,21 +501,33 @@ export default function ClaimDetailPage({
         </div>
       )}
 
-      {/* Inspector Message Modal */}
-      {showInspectorModal && (
+      {/* ===== Action Modal ===== */}
+      {showActionModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-xl max-h-[85vh] flex flex-col">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                  <Building2 className="w-5 h-5 text-blue-600" />
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                  actionModalContent.icon === "docs"
+                    ? "bg-amber-100"
+                    : actionModalContent.icon === "followup"
+                      ? "bg-purple-100"
+                      : "bg-blue-100"
+                }`}>
+                  {actionModalContent.icon === "docs" ? (
+                    <FileText className="w-5 h-5 text-amber-600" />
+                  ) : actionModalContent.icon === "followup" ? (
+                    <CalendarClock className="w-5 h-5 text-purple-600" />
+                  ) : (
+                    <Building2 className="w-5 h-5 text-blue-600" />
+                  )}
                 </div>
                 <h3 className="text-lg font-semibold text-gray-900">
-                  הודעה למפקח חברת הביטוח
+                  {actionModalContent.title}
                 </h3>
               </div>
               <button
-                onClick={() => setShowInspectorModal(false)}
+                onClick={() => setShowActionModal(false)}
                 className="text-gray-400 hover:text-gray-600 text-xl leading-none"
               >
                 ✕
@@ -557,20 +535,25 @@ export default function ClaimDetailPage({
             </div>
             <div className="flex-1 overflow-y-auto mb-4">
               <textarea
-                value={inspectorMessage}
-                onChange={(e) => setInspectorMessage(e.target.value)}
-                rows={18}
+                value={actionModalContent.message}
+                onChange={(e) =>
+                  setActionModalContent((prev) => ({
+                    ...prev,
+                    message: e.target.value,
+                  }))
+                }
+                rows={14}
                 className="w-full px-4 py-3 border border-gray-200 rounded-lg text-sm leading-relaxed focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none font-sans"
                 dir="rtl"
               />
             </div>
             <p className="text-xs text-gray-400 mb-4 flex items-center gap-1">
               <Sparkles className="w-3 h-3" />
-              נוצר אוטומטית על ידי ClaimPilot AI — ניתן לערוך לפני שליחה
+              נוצר אוטומטית — ניתן לערוך לפני שליחה
             </p>
             <div className="flex gap-3 justify-end">
               <button
-                onClick={handleCopyMessage}
+                onClick={handleCopy}
                 className="inline-flex items-center gap-2 text-sm text-gray-600 border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors font-medium"
               >
                 {copiedMessage ? (
@@ -581,16 +564,16 @@ export default function ClaimDetailPage({
                 ) : (
                   <>
                     <Copy className="w-4 h-4" />
-                    העתק הודעה
+                    העתק
                   </>
                 )}
               </button>
               <button
-                onClick={handleMarkSent}
-                className="inline-flex items-center gap-2 text-sm bg-purple-600 text-white px-5 py-2 rounded-lg hover:bg-purple-700 transition-colors font-medium"
+                onClick={handleMarkDone}
+                className="inline-flex items-center gap-2 text-sm bg-blue-600 text-white px-5 py-2 rounded-lg hover:bg-blue-700 transition-colors font-medium"
               >
-                <Send className="w-4 h-4" />
-                סמן כנשלח למפקח
+                <CheckCircle2 className="w-4 h-4" />
+                סמן כבוצע
               </button>
             </div>
           </div>

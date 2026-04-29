@@ -498,6 +498,76 @@ export function getIntakeNextAction(status: string, missingFields: string[], mis
   }
 }
 
+// --- One-line AI Summary ---
+
+export function generateOneLineSummary(claim: Claim): string {
+  const missing = getClaimMissingDocs(claim.id);
+  const missingCount = missing.filter((d) => !d.is_received).length;
+  const docs = getClaimDocuments(claim.id);
+
+  const parts: string[] = [];
+  parts.push(CLAIM_TYPE_LABELS[claim.type]);
+
+  if (claim.incident_date) {
+    parts.push(`ב${new Date(claim.incident_date).toLocaleDateString("he-IL")}`);
+  }
+
+  if (claim.description) {
+    // Take first meaningful chunk
+    const short = claim.description.split(".")[0].trim();
+    if (short.length <= 40) {
+      parts.push(short);
+    } else {
+      parts.push(short.slice(0, 40) + "...");
+    }
+  }
+
+  if (claim.claim_amount) {
+    parts.push(`סכום: ₪${claim.claim_amount.toLocaleString()}`);
+  }
+
+  if (missingCount > 0) {
+    parts.push(`${missingCount} מסמכים חסרים`);
+  } else if (docs.length > 0) {
+    parts.push("כל המסמכים קיימים");
+  }
+
+  return parts.join(" · ");
+}
+
+// --- Action Message Generators ---
+
+export function generateMissingDocsRequest(claim: Claim): string {
+  const customer = claim.customer;
+  const missing = getClaimMissingDocs(claim.id).filter((d) => !d.is_received);
+
+  if (missing.length === 0) return "אין מסמכים חסרים.";
+
+  return `שלום ${customer?.full_name || ""},
+
+בהמשך לתביעה שלך (${claim.claim_number}), אנא שלח/י את המסמכים הבאים בהקדם:
+
+${missing.map((d) => `• ${d.name} — ${d.description}`).join("\n")}
+
+ניתן לשלוח בוואטסאפ או במייל.
+תודה,
+סוכנות ClaimPilot`;
+}
+
+export function generateFollowUpMessage(claim: Claim): string {
+  return `לכבוד מחלקת תביעות,
+${claim.insurance_company}
+
+הנדון: מעקב — תביעה ${claim.claim_number}
+מבוטח: ${claim.customer?.full_name || "—"}
+פוליסה: ${claim.policy_number}
+
+אבקש עדכון בנוגע לסטטוס התביעה שהוגשה ביום ${new Date(claim.created_at).toLocaleDateString("he-IL")}.
+
+בברכה,
+סוכנות ביטוח ClaimPilot`;
+}
+
 export function getDashboardStats() {
   const total = mockClaims.length;
   const byStatus = mockClaims.reduce(
