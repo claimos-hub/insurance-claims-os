@@ -148,9 +148,96 @@ src/
 
 **סטטוס:** Pivot לסוכן אוטונומי הושלם. Demo מלא עם סימולציית WhatsApp עובד. הבילד עובר.
 
+---
+
+### 2026-04-29 - שדרוג: 3 פיצ'רים עסקיים מרכזיים
+
+**שלב 8 - סיכום תביעה אוטומטי (AI Summary Card):**
+- כרטיס בולט "סיכום תביעה אוטומטי" בדפי פרטי תביעה (`/claims/[id]` ו-`/intake/[id]`)
+- עיצוב gradient סגול-כחול עם אייקון Sparkles
+- מציג: פרטי לקוח, סוג תביעה, תאריך אירוע, תיאור, פציעות, צד שלישי, מסמכים שהתקבלו/חסרים, סטטוס
+- Mock AI — מבוסס על נתוני התביעה בפועל
+- פונקציות חדשות: `generateClaimAISummary()` לתביעות רגילות
+
+**שלב 9 - הודעה למפקח (Inspector Message Generator):**
+- כפתור "צור הודעה למפקח" בבאנר הפעולה הבאה
+- מודאל עם textarea ניתן לעריכה — מכתב רשמי בעברית למפקח חברת הביטוח
+- כולל: שם לקוח, מספר תביעה, פוליסה, תאריך אירוע, תיאור, מסמכים מצורפים/חסרים
+- כפתור "העתק הודעה" (clipboard) + "סמן כנשלח למפקח" (שינוי סטטוס)
+- פונקציה חדשה: `generateClaimInspectorMessage()`
+
+**שלב 10 - מערכת פעולה הבאה (Next Action System):**
+- באנר צבעוני בראש דפי פרטי תביעה (claims + intake)
+- לוגיקת המלצה לפי סטטוס:
+  - **אדום** (דורש טיפול): מסמכים חסרים, תביעה חדשה, תביעה נדחתה
+  - **צהוב** (ממתין): ממתין לתגובת חברת ביטוח
+  - **ירוק** (מוכן/הושלם): תביעה אושרה, נשלחה למפקח
+- תיאור מפורט + badge צבעוני
+- פונקציות חדשות: `getClaimNextAction()`, `getIntakeNextAction()`
+- טיפוס חדש: `NextAction` עם severity ו-description
+
+**קבצים שהשתנו:**
+```
+src/lib/mock-data.ts          # נוספו: generateClaimAISummary, generateClaimInspectorMessage,
+                               # getClaimNextAction, getIntakeNextAction, NextAction type
+src/app/claims/[id]/page.tsx   # נוסף: AI Summary Card, Inspector Message Modal, Next Action Banner
+src/app/intake/[id]/page.tsx   # נוסף: AI Summary Card, Next Action Banner על טאב פרטים
+```
+
+**GitHub:** https://github.com/claimos-hub/insurance-claims-os
+
+**סטטוס:** 3 פיצ'רים עסקיים מרכזיים הושלמו. הבילד עובר. הפרויקט עלה ל-GitHub.
+
 **הבא בתור:**
 - חיבור Supabase אמיתי (auth + DB)
 - אינטגרציית WhatsApp אמיתית עם WATI
 - Claude API לסיכומים והודעות חכמות (במקום mock)
 - העלאת מסמכים אמיתית ל-Storage
 - שליחת הודעת מפקח אמיתית (email/WhatsApp)
+
+---
+
+### 2026-04-29 - שכבת אוטומציה: מנוע קליטת תביעות
+
+**שלב 11 - Conversation Engine (State Machine):**
+- מנוע שיחה step-by-step עם session management
+- שלבים: START → ASK_EVENT_DATE → ASK_LOCATION → ASK_DESCRIPTION → ASK_VEHICLE → ASK_POLICY → ASK_INJURIES → ASK_DOCUMENTS → DONE
+- לוגיקת flow דינמית (דילוג על שלבי פציעות / צד שלישי לפי תשובות)
+- In-memory session store (מוכן להחלפה ל-Supabase)
+- חישוב מסמכים חסרים אוטומטי
+- יצירת תביעה בסטטוס "מוכן לבדיקה" בסיום
+
+**שלב 12 - API Route `/api/automation/webhook`:**
+- POST endpoint: מקבל `{ phone, message }` ומחזיר תשובת בוט
+- תמיכה ב-actions: `init` (יצירת/טעינת session), `reset` (שיחה חדשה)
+- GET endpoint: קבלת session לפי phone
+- מחזיר: `{ reply, session, claim_created }`
+
+**שלב 13 - סימולטור WhatsApp (`/automation`):**
+- מסך כניסה עם הזנת מספר טלפון
+- ממשק WhatsApp-style מלא (RTL, רקע pattern, בועות הודעה)
+- אנימציית "מקליד..." עם דיליי ריאליסטי
+- באנר ירוק כשתביעה נוצרת
+- כפתור reset לשיחה חדשה
+- Debug Panel בצד:
+  - פרטי session (ID, phone, step)
+  - מד שלבים עם אייקונים (הושלם/פעיל/ממתין)
+  - נתונים שנאספו בזמן אמת
+  - מסמכים חסרים
+
+**קבצים חדשים:**
+```
+src/
+├── lib/automation-engine.ts              # State machine + session store
+├── app/api/automation/webhook/route.ts   # Webhook API
+└── app/automation/
+    ├── layout.tsx                        # Layout with sidebar
+    └── page.tsx                          # WhatsApp simulator + debug panel
+```
+
+**קבצים שהשתנו:**
+```
+src/components/Sidebar.tsx   # נוסף: קישור "סוכן אוטומטי" עם אייקון Zap
+```
+
+**סטטוס:** מנוע אוטומציה מלא עם סימולטור עובד. הבילד עובר.

@@ -10,10 +10,12 @@ import {
   LogOut,
   Shield,
   MessageCircle,
+  Zap,
 } from "lucide-react";
 
 const navItems = [
   { href: "/dashboard", label: "דשבורד", icon: LayoutDashboard },
+  { href: "/automation", label: "סוכן אוטומטי", icon: Zap },
   { href: "/intake", label: "קליטת תביעות", icon: MessageCircle },
   { href: "/claims", label: "תביעות", icon: FileText },
   { href: "/claims/new", label: "תביעה חדשה", icon: Plus },
