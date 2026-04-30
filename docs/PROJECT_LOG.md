@@ -387,9 +387,63 @@ src/app/intake-sessions/page.tsx   # עמודת "צפייה" בשיחה
 
 ---
 
+### 2026-04-30 - AI-Powered Claims Intake Agent
+
+**שלב 27 - AI Claims Agent (`ai-claims-agent.ts`):**
+- מודול חדש `src/lib/ai-claims-agent.ts` — סוכן קליטת תביעות מבוסס Claude API
+- פונקציה ראשית: `processClaimMessage()` — מקבלת הודעה, לקוח קיים, session, והיסטוריית שיחה
+- מחזירה: reply, extractedData, claimType, currentStep, missingFields, missingDocuments, readinessScore, shouldCreateClaim, claimStatus
+- System prompt בעברית עם הנחיות מקצועיות: לא מבטיח אישור, לא נותן ייעוץ משפטי, רק אוסף מידע
+- זיהוי אוטומטי של סוג תביעה: car, health, life, property, travel, other
+- חילוץ נתונים מובנים מהודעות חופשיות: שם, טלפון, פוליסה, תאריך, מיקום, תיאור, פציעות, נזק
+- מסמכים נדרשים מוגדרים לכל סוג תביעה (5 סוגים)
+- Readiness score 0-100 מחושב ע"י ה-AI
+- Validation קפדני של תשובת ה-AI: JSON parsing, type checking, sanitization
+- Fallback לערכי ברירת מחדל אם שדות חסרים בתשובת ה-AI
+
+**שלב 28 - עדכון Webhook (`route.ts`):**
+- Webhook טוען לקוח קיים + session + היסטוריית שיחה מ-Supabase לפני עיבוד
+- ניסיון ראשון דרך AI agent (אם `ANTHROPIC_API_KEY` קיים)
+- Fallback אוטומטי ל-automation-engine אם ה-AI נכשל
+- Persistence חדש ל-AI: מיזוג נתונים שנאספו, עדכון שם לקוח, יצירת תביעה אוטומטית
+- AI summary ו-inspector message נבנים מנתוני ה-AI
+- לוגים עם prefix `[webhook]` ו-`[ai-agent]`
+- תאימות לאחור מלאה — המנוע הישן עדיין עובד כ-fallback
+
+**Architecture:**
+```
+WhatsApp → Twilio → /api/webhook
+  ├── Load customer + session + history from Supabase
+  ├── Try AI Agent (Claude API)
+  │   ├── Success → AI reply + persist + create claim if ready
+  │   └── Fail → Fallback ↓
+  └── Rule-based engine (automation-engine.ts)
+      └── Fixed step flow + persist
+```
+
+**קבצים חדשים:**
+```
+src/lib/ai-claims-agent.ts    # AI claims intake agent
+```
+
+**קבצים שהשתנו:**
+```
+src/app/api/webhook/route.ts  # AI-first with fallback
+package.json                  # נוסף: @anthropic-ai/sdk
+```
+
+**Environment Variables חדשים:**
+| Variable | Purpose |
+|----------|---------|
+| `ANTHROPIC_API_KEY` | Claude API key (optional — enables AI agent) |
+
+**סטטוס:** AI Claims Agent מוכן. הבילד עובר. נדרש להוסיף `ANTHROPIC_API_KEY` ב-Vercel להפעלת ה-AI.
+
+---
+
 ## Next Steps
 
-- [ ] Claude API לסיכומים חכמים (במקום template)
+- [ ] הוספת ANTHROPIC_API_KEY ב-Vercel ובדיקת AI agent ב-production
 - [ ] העלאת קבצים ל-Supabase Storage (תמונות, מסמכים)
 - [ ] שליחת הודעה אמיתית למפקח (email/WhatsApp)
 - [ ] חילוץ שם לקוח מפרופיל WhatsApp
