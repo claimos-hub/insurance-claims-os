@@ -89,30 +89,9 @@ const ALL_FIELDS = [
   "damage_details",
 ];
 
-// ---- System prompt ----
+// ---- System prompt (constant, enforced on every request) ----
 
-function buildSystemPrompt(
-  existingCustomer: AIAgentInput["existingCustomer"],
-  currentSession: AIAgentInput["currentSession"]
-): string {
-  const customerContext = existingCustomer
-    ? `
-הלקוח מוכר במערכת:
-- שם: ${existingCustomer.full_name || "לא ידוע"}
-- טלפון: ${existingCustomer.phone}
-- אימייל: ${existingCustomer.email || "לא ידוע"}
-אל תשאל שוב פרטים שכבר ידועים.`
-    : "הלקוח חדש במערכת. יש לאסוף את שמו המלא.";
-
-  const sessionContext =
-    currentSession && Object.keys(currentSession.collected_data).length > 0
-      ? `
-נתונים שכבר נאספו בשיחה הנוכחית:
-${JSON.stringify(currentSession.collected_data, null, 2)}
-אל תשאל שוב על פרטים שכבר נאספו.`
-      : "זו תחילת שיחה חדשה.";
-
-  return `אתה סוכן תביעות ביטוח דיגיטלי מקצועי בשם ClaimPilot.
+const SYSTEM_PROMPT = `אתה סוכן תביעות ביטוח דיגיטלי מקצועי בשם ClaimPilot.
 תפקידך לנהל שיחה חכמה, טבעית ואנושית עם לקוחות לצורך פתיחת תביעות ביטוח דרך WhatsApp.
 המטרה: הלקוח ירגיש שהוא מדבר עם סוכן אנושי חכם, לא עם בוט.
 
@@ -167,11 +146,7 @@ ${JSON.stringify(currentSession.collected_data, null, 2)}
 "אוקיי
 איפה זה קרה?"
 
-${customerContext}
-
-${sessionContext}
-
-סוגי ביטוח שאתה מזהה:
+=== סוגי ביטוח ===
 - car (רכב)
 - health (בריאות)
 - life (חיים)
@@ -179,10 +154,10 @@ ${sessionContext}
 - travel (נסיעות)
 - other (אחר)
 
-מסמכים נדרשים לפי סוג תביעה:
+=== מסמכים נדרשים לפי סוג תביעה ===
 ${JSON.stringify(REQUIRED_DOCUMENTS, null, 2)}
 
-שדות שיש לאסוף:
+=== שדות שיש לאסוף ===
 - customer_name: שם מלא של הלקוח
 - phone: מספר טלפון
 - policy_number: מספר פוליסה
@@ -195,6 +170,7 @@ ${JSON.stringify(REQUIRED_DOCUMENTS, null, 2)}
 - injuries: פרטי פציעות
 - damage_details: פרטי נזק
 
+=== פורמט תשובה ===
 אתה חייב להחזיר תשובה בפורמט JSON בלבד, ללא טקסט נוסף לפני או אחרי ה-JSON.
 שים לב: שדה "reply" הוא ההודעה שתישלח ללקוח ב-WhatsApp — היא חייבת להיות קצרה, טבעית ואנושית לפי הכללים למעלה.
 
@@ -227,6 +203,36 @@ ${JSON.stringify(REQUIRED_DOCUMENTS, null, 2)}
 - requesting_documents: ביקשנו מסמכים
 - ready_for_review: מוכן לבדיקת סוכן
 - done: התביעה נוצרה והלקוח עודכן`;
+
+// ---- Build full system prompt with dynamic context ----
+
+function buildSystemPrompt(
+  existingCustomer: AIAgentInput["existingCustomer"],
+  currentSession: AIAgentInput["currentSession"]
+): string {
+  const customerContext = existingCustomer
+    ? `
+הלקוח מוכר במערכת:
+- שם: ${existingCustomer.full_name || "לא ידוע"}
+- טלפון: ${existingCustomer.phone}
+- אימייל: ${existingCustomer.email || "לא ידוע"}
+אל תשאל שוב פרטים שכבר ידועים.`
+    : "הלקוח חדש במערכת. יש לאסוף את שמו המלא.";
+
+  const sessionContext =
+    currentSession && Object.keys(currentSession.collected_data).length > 0
+      ? `
+נתונים שכבר נאספו בשיחה הנוכחית:
+${JSON.stringify(currentSession.collected_data, null, 2)}
+אל תשאל שוב על פרטים שכבר נאספו.`
+      : "זו תחילת שיחה חדשה.";
+
+  return `${SYSTEM_PROMPT}
+
+=== הקשר שיחה נוכחי ===
+${customerContext}
+
+${sessionContext}`;
 }
 
 // ---- Check if AI is available ----
