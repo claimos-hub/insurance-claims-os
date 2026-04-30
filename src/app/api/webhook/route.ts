@@ -404,10 +404,16 @@ export async function POST(req: Request) {
       console.error("[webhook] Missing TWILIO_SID or TWILIO_AUTH_TOKEN — reply not sent");
     }
 
-    return new Response("OK", { status: 200 });
+    return new Response("<Response></Response>", {
+      status: 200,
+      headers: { "Content-Type": "text/xml" },
+    });
   } catch (err) {
     console.error("[webhook] Fatal error:", err);
-    return new Response("OK", { status: 200 });
+    return new Response("<Response></Response>", {
+      status: 200,
+      headers: { "Content-Type": "text/xml" },
+    });
   }
 }
 
