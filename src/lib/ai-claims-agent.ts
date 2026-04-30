@@ -300,6 +300,10 @@ export async function processClaimMessage(
 
     // Parse and validate JSON
     const parsed = parseAIResponse(rawText);
+
+    // Post-process: enforce reply quality
+    parsed.reply = postProcessReply(parsed.reply, parsed.missingFields);
+
     console.log("[ai-agent] Parsed AI response:", {
       claimType: parsed.claimType,
       currentStep: parsed.currentStep,
@@ -316,6 +320,44 @@ export async function processClaimMessage(
     console.error("[ai-agent] Claude API error:", err);
     throw new Error("AI_API_ERROR");
   }
+}
+
+// ---- Post-process reply quality ----
+
+const EMPTY_REPLIES = ["ok", "אוקיי", "בסדר", "הבנתי", "טוב", "אוקי"];
+const FALLBACK_REPLY = "הבנתי אותך 👍\nכדי להתקדם — תוכל לחדד קצת יותר?";
+const MIN_REPLY_LENGTH = 5;
+const SHORT_REPLY_THRESHOLD = 15;
+
+function postProcessReply(reply: string, missingFields: string[]): string {
+  const trimmed = reply.trim();
+  const normalized = trimmed.replace(/[.!?,\s]+/g, "").toLowerCase();
+
+  // Block empty acknowledgements and too-short replies
+  if (EMPTY_REPLIES.includes(normalized) || trimmed.length < MIN_REPLY_LENGTH) {
+    console.log("[ai-agent] Blocked empty/short reply:", JSON.stringify(trimmed));
+    return FALLBACK_REPLY;
+  }
+
+  // Enrich short replies by appending a nudge about missing fields
+  if (trimmed.length < SHORT_REPLY_THRESHOLD && missingFields.length > 0) {
+    const fieldHints: Record<string, string> = {
+      claim_type: "איזה סוג ביטוח מדובר?",
+      event_date: "מתי זה קרה?",
+      event_location: "איפה זה קרה?",
+      description: "תוכל לתאר בקצרה מה קרה?",
+      policy_number: "יש לך מספר פוליסה?",
+      damage_details: "מה הנזק שנגרם?",
+      injuries: "היו פציעות?",
+    };
+    const nextField = missingFields.find((f) => fieldHints[f]);
+    if (nextField) {
+      console.log("[ai-agent] Enriching short reply with follow-up for:", nextField);
+      return `${trimmed}\n${fieldHints[nextField]}`;
+    }
+  }
+
+  return trimmed;
 }
 
 // ---- Parse and validate AI response ----
