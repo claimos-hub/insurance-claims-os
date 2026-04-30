@@ -274,3 +274,124 @@ src/components/Sidebar.tsx   # נוסף: קישור "סוכן אוטומטי" ע
 - `generateFollowUpMessage()` — הודעת מעקב לחברת ביטוח
 
 **סטטוס:** Claim Detail Page redesigned. הבילד עובר.
+
+---
+
+### 2026-04-29 - אינטגרציית Twilio WhatsApp
+
+**שלב 17 - Webhook לטוויליו (`/api/webhook`):**
+- Endpoint חדש לקבלת הודעות WhatsApp מ-Twilio (POST form-encoded)
+- המרת פורמט טלפון: `whatsapp:+972...` → `05...` ובחזרה
+- עיבוד הודעה דרך מנוע השיחה (automation-engine)
+- שליחת תשובת בוט דרך Twilio SDK
+- הפרדה: `/api/webhook` (Twilio) vs `/api/automation/webhook` (סימולטור)
+
+**קבצים:**
+```
+src/app/api/webhook/route.ts    # Twilio WhatsApp webhook
+package.json                    # נוסף: twilio dependency
+```
+
+**סטטוס:** Twilio webhook עובד, בוט מגיב ב-WhatsApp. הבילד עובר.
+
+---
+
+### 2026-04-30 - Supabase Persistence Layer
+
+**שלב 18 - סכמת DB:**
+- 5 טבלאות: `customers`, `intake_sessions`, `intake_messages`, `claims`, `claim_documents`
+- Triggers ל-updated_at, RLS עם service role full access
+- JSONB לנתונים דינמיים (collected_data, third_party_details, missing_documents)
+- Migration SQL ב-`docs/supabase-v2-schema.sql`
+
+**שלב 19 - שכבת Persistence (`db.ts`):**
+- `supabaseAdmin` — server client עם service role key
+- Customer: `findOrCreateCustomer(phone)` — upsert by phone
+- Sessions: `findActiveSession()`, `createIntakeSession()`, `updateIntakeSession()`
+- Messages: `saveIntakeMessage()` — direction: `inbound`/`outbound`
+- Claims: `createClaim()` — כולל readiness score, AI summary, inspector message
+- Read: `getAllClaims()`, `getClaimByIdFromDb()`, `getAllIntakeSessions()`, `getDashboardStatsFromDb()`
+
+**שלב 20 - API Routes:**
+- `GET /api/claims` — כל התביעות עם customer join
+- `GET /api/claims/[id]` — תביעה + customer + session + messages
+- `GET /api/dashboard` — סטטיסטיקות + claims
+- `GET /api/intake-sessions` — כל שיחות הקליטה עם ספירת הודעות
+
+**שלב 21 - עדכון UI לנתוני DB:**
+- Dashboard: טוען מ-API, fallback ל-mock
+- Claims list: טוען מ-API, fallback ל-mock
+- Claim detail: dual-mode (DB / mock) — tabs שונים לפי מקור
+- דף שיחות קליטה חדש (`/intake-sessions`)
+
+**שלב 22 - תיקון Webhook Persistence:**
+- תיקון direction: `inbound`/`outbound` (היה `user`/`bot` — כשל בלי שגיאה)
+- Inline של כל קריאות Supabase ב-webhook עם 15 console.log statements
+- תיקון שגיאת הקלדה ב-URL של Supabase ב-Vercel (`mum` → `mmu`)
+- כל שלב מתועד עם prefix `[webhook]`
+
+**Environment Variables (Vercel):**
+| Variable | Purpose |
+|----------|---------|
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anonymous key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service role key (server-side) |
+| `TWILIO_SID` | Twilio Account SID |
+| `TWILIO_AUTH_TOKEN` | Twilio Auth Token |
+| `TWILIO_WHATSAPP_FROM` | Twilio WhatsApp sender |
+
+**סטטוס:** Persistence מלא עובד. הודעות WhatsApp נשמרות ב-Supabase. הבילד עובר.
+
+---
+
+### 2026-04-30 - Production UX Upgrade
+
+**שלב 23 - ReadinessScore Component:**
+- קומפוננטת SVG progress ring עם קידוד צבעים:
+  - ירוק (≥80%) — "מוכן לטיפול"
+  - כתום (≥50%) — "חסרים פרטים"
+  - אדום (<50%) — "בתחילת תהליך"
+- 3 וריאנטים: `ReadinessRing` (טבעת), `ReadinessBadge` (badge), `ReadinessScore` (טבעת + label)
+
+**שלב 24 - דף שיחה מלא (`/claims/[id]/conversation`):**
+- עמוד ייעודי לצפייה בשיחת WhatsApp של תביעה
+- Header עם WhatsApp-style bar ירוק, פרטי לקוח, readiness badge
+- בועות הודעה: לבן = inbound (לקוח), ירוק = outbound (ClaimPilot)
+- רקע WhatsApp (#e5ddd5)
+- סיכום נתונים שנאספו — grid עם תרגום שדות לעברית
+
+**שלב 25 - שדרוג Messages Tab:**
+- רקע WhatsApp-style בטאב הודעות בפרטי תביעה
+- בועות הודעה מעוצבות עם labels (לקוח/ClaimPilot)
+- כפתור "צפה בשיחה המלאה" מקשר לדף השיחה
+
+**שלב 26 - Claims List + Intake Sessions:**
+- עמודת readiness ring חזותית ברשימת תביעות
+- עמודת קישור לשיחה (אייקון ירוק) ברשימת תביעות
+- עמודת "צפייה" בשיחה בדף שיחות קליטה
+
+**קבצים חדשים:**
+```
+src/components/ui/ReadinessScore.tsx              # קומפוננטת ציון מוכנות
+src/app/claims/[id]/conversation/page.tsx         # דף שיחה מלא
+```
+
+**קבצים שהשתנו:**
+```
+src/app/claims/[id]/page.tsx       # ReadinessScore בפרטים, WhatsApp-style messages, קישור לשיחה
+src/app/claims/page.tsx            # עמודות readiness ring + conversation link
+src/app/intake-sessions/page.tsx   # עמודת "צפייה" בשיחה
+```
+
+**סטטוס:** UX production-ready. הבילד עובר.
+
+---
+
+## Next Steps
+
+- [ ] Claude API לסיכומים חכמים (במקום template)
+- [ ] העלאת קבצים ל-Supabase Storage (תמונות, מסמכים)
+- [ ] שליחת הודעה אמיתית למפקח (email/WhatsApp)
+- [ ] חילוץ שם לקוח מפרופיל WhatsApp
+- [ ] תמיכה במספר תביעות ללקוח
+- [ ] אימות סוכן (דף login אמיתי)

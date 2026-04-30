@@ -44,6 +44,7 @@ import {
 import type { NextActionSeverity } from "@/lib/mock-data";
 import StatusBadge from "@/components/ui/StatusBadge";
 import ClaimTypeBadge from "@/components/ui/ClaimTypeBadge";
+import ReadinessScore from "@/components/ui/ReadinessScore";
 import type { ClaimType, ClaimStatus } from "@/types";
 
 interface DbClaimData {
@@ -396,7 +397,11 @@ export default function ClaimDetailPage({
                   {dbClaim!.policy_number && <InfoRow icon={Hash} label="מספר פוליסה" value={dbClaim!.policy_number} />}
                   {dbClaim!.injuries !== null && <InfoRow icon={AlertTriangle} label="פציעות" value={dbClaim!.injuries ? "כן" : "לא"} />}
                   {dbClaim!.third_party_involved !== null && <InfoRow icon={User} label="צד שלישי" value={dbClaim!.third_party_involved ? "כן" : "לא"} />}
-                  {dbClaim!.readiness_score > 0 && <InfoRow icon={CheckCircle2} label="ציון מוכנות" value={`${dbClaim!.readiness_score}%`} />}
+                  {dbClaim!.readiness_score > 0 && (
+                    <div className="pt-2 mt-2 border-t border-gray-100">
+                      <ReadinessScore score={dbClaim!.readiness_score} />
+                    </div>
+                  )}
                 </>
               ) : (
                 <>
@@ -495,27 +500,49 @@ export default function ClaimDetailPage({
 
       {/* Messages Tab (DB claims only) */}
       {activeTab === "messages" && isDbClaim && (
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h3 className="text-base font-semibold text-gray-900 mb-5">שיחת WhatsApp</h3>
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+            <h3 className="text-base font-semibold text-gray-900">שיחת WhatsApp</h3>
+            <Link
+              href={`/claims/${id}/conversation`}
+              className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700 font-medium"
+            >
+              <MessageSquare className="w-4 h-4" />
+              צפה בשיחה המלאה
+            </Link>
+          </div>
           {dbMessages.length === 0 ? (
             <div className="text-center py-10 text-gray-400">
               <MessageSquare className="w-10 h-10 mx-auto mb-2" />
               <p>אין הודעות</p>
             </div>
           ) : (
-            <div className="space-y-3 max-h-[500px] overflow-y-auto">
-              {dbMessages.map((msg) => (
-                <div key={msg.id} className={`flex ${msg.direction === "inbound" ? "justify-end" : "justify-start"}`}>
-                  <div className={`max-w-[75%] px-4 py-2.5 rounded-2xl text-sm ${
-                    msg.direction === "inbound"
-                      ? "bg-green-100 text-green-900 rounded-br-md"
-                      : "bg-gray-100 text-gray-800 rounded-bl-md"
-                  }`}>
-                    <p className="whitespace-pre-line">{msg.message}</p>
-                    <p className="text-[10px] text-gray-400 mt-1">{new Date(msg.created_at).toLocaleString("he-IL")}</p>
+            <div className="bg-[#e5ddd5] p-4 space-y-2 max-h-[500px] overflow-y-auto">
+              {dbMessages.map((msg) => {
+                const isInbound = msg.direction === "inbound";
+                return (
+                  <div key={msg.id} className={`flex ${isInbound ? "justify-start" : "justify-end"}`}>
+                    <div className={`relative max-w-[75%] px-3 py-2 rounded-lg text-sm shadow-sm ${
+                      isInbound
+                        ? "bg-white text-gray-900 rounded-tr-none"
+                        : "bg-[#dcf8c6] text-gray-900 rounded-tl-none"
+                    }`}>
+                      <span className="text-[10px] font-medium text-gray-400 block mb-0.5">
+                        {isInbound ? "לקוח" : "ClaimPilot"}
+                      </span>
+                      <p className="whitespace-pre-line leading-relaxed">{msg.message}</p>
+                      <p className="text-[10px] text-gray-400 mt-1 text-left">
+                        {new Date(msg.created_at).toLocaleString("he-IL", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          day: "2-digit",
+                          month: "2-digit",
+                        })}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

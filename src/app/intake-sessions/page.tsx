@@ -8,8 +8,8 @@ import {
   Clock,
   CheckCircle2,
   FileText,
-  AlertCircle,
   Loader2,
+  Eye,
 } from "lucide-react";
 
 interface IntakeSessionRow {
@@ -98,6 +98,7 @@ export default function IntakeSessionsPage() {
                 <th className="text-right text-xs font-medium text-gray-500 uppercase px-5 py-3">סטטוס</th>
                 <th className="text-right text-xs font-medium text-gray-500 uppercase px-5 py-3">הודעות</th>
                 <th className="text-right text-xs font-medium text-gray-500 uppercase px-5 py-3">תביעה</th>
+                <th className="text-right text-xs font-medium text-gray-500 uppercase px-5 py-3">שיחה</th>
                 <th className="text-right text-xs font-medium text-gray-500 uppercase px-5 py-3">נוצר</th>
                 <th className="text-right text-xs font-medium text-gray-500 uppercase px-5 py-3">עודכן</th>
               </tr>
@@ -147,6 +148,19 @@ export default function IntakeSessionsPage() {
                         </Link>
                       ) : (
                         <span className="text-sm text-gray-400">—</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-4">
+                      {session.claim ? (
+                        <Link
+                          href={`/claims/${session.claim.id}/conversation`}
+                          className="inline-flex items-center gap-1 text-sm text-green-600 hover:text-green-700"
+                        >
+                          <Eye className="w-4 h-4" />
+                          <span>צפייה</span>
+                        </Link>
+                      ) : (
+                        <span className="text-sm text-gray-300">—</span>
                       )}
                     </td>
                     <td className="px-5 py-4 text-sm text-gray-500">

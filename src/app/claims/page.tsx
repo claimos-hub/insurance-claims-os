@@ -2,11 +2,12 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { Plus, Search, Filter } from "lucide-react";
+import { Plus, Search, Filter, MessageSquare } from "lucide-react";
 import { mockClaims } from "@/lib/mock-data";
 import { ClaimStatus, ClaimType, CLAIM_STATUS_LABELS, CLAIM_TYPE_LABELS } from "@/types";
 import StatusBadge from "@/components/ui/StatusBadge";
 import ClaimTypeBadge from "@/components/ui/ClaimTypeBadge";
+import { ReadinessRing } from "@/components/ui/ReadinessScore";
 
 interface ClaimRow {
   id: string;
@@ -21,6 +22,8 @@ interface ClaimRow {
   customer_id?: string;
   customer?: { full_name: string; id_number?: string } | null;
   event_date?: string | null;
+  readiness_score?: number;
+  intake_session_id?: string | null;
 }
 
 export default function ClaimsListPage() {
@@ -170,7 +173,13 @@ export default function ClaimsListPage() {
                 סטטוס
               </th>
               <th className="text-right text-xs font-medium text-gray-500 uppercase px-5 py-3">
+                מוכנות
+              </th>
+              <th className="text-right text-xs font-medium text-gray-500 uppercase px-5 py-3">
                 תאריך
+              </th>
+              <th className="text-right text-xs font-medium text-gray-500 uppercase px-5 py-3">
+                שיחה
               </th>
             </tr>
           </thead>
@@ -205,8 +214,28 @@ export default function ClaimsListPage() {
                 <td className="px-5 py-4">
                   <StatusBadge status={claim.status} />
                 </td>
+                <td className="px-5 py-4">
+                  {claim.readiness_score != null ? (
+                    <ReadinessRing score={claim.readiness_score} size={36} />
+                  ) : (
+                    <span className="text-xs text-gray-300">—</span>
+                  )}
+                </td>
                 <td className="px-5 py-4 text-sm text-gray-500">
                   {new Date(claim.created_at).toLocaleDateString("he-IL")}
+                </td>
+                <td className="px-5 py-4">
+                  {claim.intake_session_id ? (
+                    <Link
+                      href={`/claims/${claim.id}/conversation`}
+                      className="inline-flex items-center gap-1 text-sm text-green-600 hover:text-green-700"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <MessageSquare className="w-4 h-4" />
+                    </Link>
+                  ) : (
+                    <span className="text-xs text-gray-300">—</span>
+                  )}
                 </td>
               </tr>
             ))}
