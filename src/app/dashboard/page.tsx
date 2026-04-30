@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   FileText,
@@ -7,16 +8,75 @@ import {
   CheckCircle2,
   XCircle,
   AlertCircle,
-  TrendingUp,
   Users,
   DollarSign,
+  MessageCircle,
 } from "lucide-react";
 import { mockClaims, mockCustomers, getDashboardStats } from "@/lib/mock-data";
 import StatusBadge from "@/components/ui/StatusBadge";
 import ClaimTypeBadge from "@/components/ui/ClaimTypeBadge";
+import type { ClaimStatus, ClaimType } from "@/types";
+
+interface DashboardClaim {
+  id: string;
+  claim_number: string;
+  title?: string;
+  claim_type?: string;
+  type?: ClaimType;
+  status: ClaimStatus;
+  claim_amount?: number | null;
+  created_at: string;
+  customer_id?: string;
+  customer?: { full_name: string } | null;
+  description?: string | null;
+}
 
 export default function DashboardPage() {
-  const stats = getDashboardStats();
+  const [dbClaims, setDbClaims] = useState<DashboardClaim[] | null>(null);
+  const [dbStats, setDbStats] = useState<{
+    total: number;
+    byStatus: Record<string, number>;
+    totalSessions: number;
+    activeSessions: number;
+  } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/dashboard")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.claims && data.claims.length > 0) {
+          setDbClaims(data.claims);
+        }
+        if (data.stats && data.stats.total > 0) {
+          setDbStats(data.stats);
+        }
+      })
+      .catch(() => {
+        // Supabase not configured — use mock data
+      });
+  }, []);
+
+  // Use DB data if available, otherwise mock
+  const useDb = dbClaims !== null && dbClaims.length > 0;
+  const mockStats = getDashboardStats();
+
+  const stats = dbStats || {
+    total: mockStats.total,
+    byStatus: mockStats.byStatus,
+    totalSessions: 0,
+    activeSessions: 0,
+  };
+
+  const allClaims: DashboardClaim[] = useDb
+    ? dbClaims
+    : mockClaims.map((c) => ({
+        ...c,
+        customer: c.customer ? { full_name: c.customer.full_name } : null,
+      }));
+
+  const totalAmount = useDb
+    ? 0
+    : mockStats.totalAmount;
 
   const statCards = [
     {
@@ -51,33 +111,43 @@ export default function DashboardPage() {
       iconBg: "bg-red-100",
     },
     {
-      label: "לקוחות פעילים",
-      value: mockCustomers.length,
-      icon: Users,
+      label: useDb ? "שיחות קליטה" : "לקוחות פעילים",
+      value: useDb ? stats.totalSessions : mockCustomers.length,
+      icon: useDb ? MessageCircle : Users,
       color: "bg-indigo-50 text-indigo-600",
       iconBg: "bg-indigo-100",
     },
     {
-      label: "סכום תביעות",
-      value: `₪${(stats.totalAmount / 1000).toFixed(0)}K`,
-      icon: DollarSign,
+      label: useDb ? "שיחות פעילות" : "סכום תביעות",
+      value: useDb
+        ? stats.activeSessions
+        : `₪${(totalAmount / 1000).toFixed(0)}K`,
+      icon: useDb ? Clock : DollarSign,
       color: "bg-emerald-50 text-emerald-600",
       iconBg: "bg-emerald-100",
     },
   ];
 
-  const recentClaims = [...mockClaims]
+  const recentClaims = [...allClaims]
     .sort(
       (a, b) =>
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     )
     .slice(0, 5);
 
-  const urgentClaims = mockClaims.filter(
+  const urgentClaims = allClaims.filter(
     (c) =>
       c.status === "new" ||
       c.status === "waiting_customer_docs"
   );
+
+  function getClaimTitle(claim: DashboardClaim): string {
+    return claim.title || claim.description || `תביעת ${claim.claim_type || "ביטוח"}`;
+  }
+
+  function getClaimType(claim: DashboardClaim): ClaimType {
+    return (claim.type || claim.claim_type || "car") as ClaimType;
+  }
 
   return (
     <div>
@@ -134,7 +204,7 @@ export default function DashboardPage() {
               >
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-900 truncate">
-                    {claim.title}
+                    {getClaimTitle(claim)}
                   </p>
                   <div className="flex items-center gap-2 mt-1">
                     <span className="text-xs text-gray-500">
@@ -142,7 +212,7 @@ export default function DashboardPage() {
                     </span>
                     <span className="text-xs text-gray-400">•</span>
                     <span className="text-xs text-gray-500">
-                      {claim.customer?.full_name}
+                      {claim.customer?.full_name || "לקוח"}
                     </span>
                   </div>
                 </div>
@@ -175,13 +245,13 @@ export default function DashboardPage() {
                 >
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-900 truncate">
-                      {claim.title}
+                      {getClaimTitle(claim)}
                     </p>
                     <div className="flex items-center gap-2 mt-1">
-                      <ClaimTypeBadge type={claim.type} />
+                      <ClaimTypeBadge type={getClaimType(claim)} />
                       <span className="text-xs text-gray-400">•</span>
                       <span className="text-xs text-gray-500">
-                        {claim.customer?.full_name}
+                        {claim.customer?.full_name || "לקוח"}
                       </span>
                     </div>
                   </div>

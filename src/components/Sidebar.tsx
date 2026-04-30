@@ -11,6 +11,7 @@ import {
   Shield,
   MessageCircle,
   Zap,
+  PhoneIncoming,
 } from "lucide-react";
 
 const navItems = [
@@ -20,6 +21,7 @@ const navItems = [
   { href: "/claims", label: "תביעות", icon: FileText },
   { href: "/claims/new", label: "תביעה חדשה", icon: Plus },
   { href: "/customers", label: "לקוחות", icon: Users },
+  { href: "/intake-sessions", label: "שיחות WhatsApp", icon: PhoneIncoming },
 ];
 
 export default function Sidebar() {

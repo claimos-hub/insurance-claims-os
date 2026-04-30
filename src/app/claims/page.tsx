@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Plus, Search, Filter } from "lucide-react";
 import { mockClaims } from "@/lib/mock-data";
@@ -8,22 +8,86 @@ import { ClaimStatus, ClaimType, CLAIM_STATUS_LABELS, CLAIM_TYPE_LABELS } from "
 import StatusBadge from "@/components/ui/StatusBadge";
 import ClaimTypeBadge from "@/components/ui/ClaimTypeBadge";
 
+interface ClaimRow {
+  id: string;
+  claim_number: string;
+  title?: string;
+  description?: string | null;
+  claim_type?: string;
+  type?: ClaimType;
+  status: ClaimStatus;
+  claim_amount?: number | null;
+  created_at: string;
+  customer_id?: string;
+  customer?: { full_name: string; id_number?: string } | null;
+  event_date?: string | null;
+}
+
 export default function ClaimsListPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<ClaimStatus | "all">("all");
   const [typeFilter, setTypeFilter] = useState<ClaimType | "all">("all");
+  const [claims, setClaims] = useState<ClaimRow[]>([]);
+  const [loaded, setLoaded] = useState(false);
 
-  const filtered = mockClaims.filter((claim) => {
+  useEffect(() => {
+    fetch("/api/claims")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.claims && data.claims.length > 0) {
+          setClaims(data.claims);
+        } else {
+          // Fallback to mock
+          setClaims(
+            mockClaims.map((c) => ({
+              ...c,
+              customer: c.customer ? { full_name: c.customer.full_name, id_number: c.customer.id_number } : null,
+            }))
+          );
+        }
+        setLoaded(true);
+      })
+      .catch(() => {
+        setClaims(
+          mockClaims.map((c) => ({
+            ...c,
+            customer: c.customer ? { full_name: c.customer.full_name, id_number: c.customer.id_number } : null,
+          }))
+        );
+        setLoaded(true);
+      });
+  }, []);
+
+  function getTitle(c: ClaimRow): string {
+    return c.title || c.description || `תביעת ${c.claim_type || "ביטוח"}`;
+  }
+
+  function getType(c: ClaimRow): ClaimType {
+    return (c.type || c.claim_type || "car") as ClaimType;
+  }
+
+  const filtered = claims.filter((claim) => {
+    const title = getTitle(claim);
+    const name = claim.customer?.full_name || "";
     const matchesSearch =
       search === "" ||
-      claim.title.includes(search) ||
+      title.includes(search) ||
       claim.claim_number.includes(search) ||
-      claim.customer?.full_name.includes(search);
+      name.includes(search);
     const matchesStatus =
       statusFilter === "all" || claim.status === statusFilter;
-    const matchesType = typeFilter === "all" || claim.type === typeFilter;
+    const claimType = getType(claim);
+    const matchesType = typeFilter === "all" || claimType === typeFilter;
     return matchesSearch && matchesStatus && matchesType;
   });
+
+  if (!loaded) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="text-gray-400">טוען תביעות...</div>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -31,7 +95,7 @@ export default function ClaimsListPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">תביעות</h1>
           <p className="text-gray-500 mt-1">
-            {filtered.length} תביעות מתוך {mockClaims.length}
+            {filtered.length} תביעות מתוך {claims.length}
           </p>
         </div>
         <Link
@@ -106,9 +170,6 @@ export default function ClaimsListPage() {
                 סטטוס
               </th>
               <th className="text-right text-xs font-medium text-gray-500 uppercase px-5 py-3">
-                סכום
-              </th>
-              <th className="text-right text-xs font-medium text-gray-500 uppercase px-5 py-3">
                 תאריך
               </th>
             </tr>
@@ -132,27 +193,17 @@ export default function ClaimsListPage() {
                     href={`/claims/${claim.id}`}
                     className="text-sm font-medium text-gray-900 hover:text-blue-600"
                   >
-                    {claim.title}
+                    {getTitle(claim)}
                   </Link>
                 </td>
-                <td className="px-5 py-4">
-                  <Link
-                    href={`/customers/${claim.customer_id}`}
-                    className="text-sm text-gray-600 hover:text-blue-600"
-                  >
-                    {claim.customer?.full_name}
-                  </Link>
+                <td className="px-5 py-4 text-sm text-gray-600">
+                  {claim.customer?.full_name || "לקוח"}
                 </td>
                 <td className="px-5 py-4">
-                  <ClaimTypeBadge type={claim.type} />
+                  <ClaimTypeBadge type={getType(claim)} />
                 </td>
                 <td className="px-5 py-4">
                   <StatusBadge status={claim.status} />
-                </td>
-                <td className="px-5 py-4 text-sm text-gray-900">
-                  {claim.claim_amount
-                    ? `₪${claim.claim_amount.toLocaleString()}`
-                    : "-"}
                 </td>
                 <td className="px-5 py-4 text-sm text-gray-500">
                   {new Date(claim.created_at).toLocaleDateString("he-IL")}
