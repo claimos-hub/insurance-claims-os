@@ -1,5 +1,5 @@
 import { processMessage, getOrCreateSession, calculateMissingDocs } from "@/lib/automation-engine";
-import { processClaimMessage, isAIAvailable } from "@/lib/ai-claims-agent";
+import { processClaimMessage, isAIAvailable, REQUIRED_DOCUMENTS } from "@/lib/ai-claims-agent";
 import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase";
 import twilio from "twilio";
 
@@ -107,13 +107,12 @@ export async function POST(req: Request) {
         });
 
         botReply = aiResult.reply;
-        claimCreated = aiResult.shouldCreateClaim;
+        claimCreated = aiResult.readyForClaim;
         usedAI = true;
         console.log("[webhook] AI agent success:", {
-          claimType: aiResult.claimType,
-          step: aiResult.currentStep,
-          readiness: aiResult.readinessScore,
-          shouldCreate: aiResult.shouldCreateClaim,
+          readyForClaim: aiResult.readyForClaim,
+          missingFields: aiResult.missingFields,
+          dataKeys: Object.keys(aiResult.updatedData),
         });
       } catch (aiErr) {
         console.error("[webhook] AI agent failed, falling back to rule-based engine:", aiErr);
@@ -229,12 +228,12 @@ export async function POST(req: Request) {
     // ---- AI Agent persistence ----
     if (usedAI && aiResult && isSupabaseConfigured() && supabaseAdmin) {
       try {
+        const data = aiResult.updatedData;
+
         // Create customer if needed
         if (!customerId) {
           const customerName =
-            typeof aiResult.extractedData.customer_name === "string"
-              ? aiResult.extractedData.customer_name
-              : "";
+            typeof data.full_name === "string" ? data.full_name : "";
           const { data: newCust } = await supabaseAdmin
             .from("customers")
             .insert({ phone, full_name: customerName })
@@ -245,18 +244,29 @@ export async function POST(req: Request) {
             console.log("[webhook] Created new customer:", customerId);
           }
         } else if (
-          typeof aiResult.extractedData.customer_name === "string" &&
-          aiResult.extractedData.customer_name &&
+          typeof data.full_name === "string" &&
+          data.full_name &&
           existingCustomer &&
           !existingCustomer.full_name
         ) {
-          // Update customer name if we learned it
           await supabaseAdmin
             .from("customers")
-            .update({ full_name: aiResult.extractedData.customer_name })
+            .update({ full_name: data.full_name })
             .eq("id", customerId);
-          console.log("[webhook] Updated customer name:", aiResult.extractedData.customer_name);
+          console.log("[webhook] Updated customer name:", data.full_name);
         }
+
+        // Derive claim type from updatedData
+        const claimType = typeof data.claim_type === "string" && data.claim_type !== "unknown"
+          ? data.claim_type
+          : (currentSession?.collected_data?.claim_type as string) || "unknown";
+
+        // Determine current step from state
+        const currentStep = aiResult.readyForClaim
+          ? "done"
+          : aiResult.missingFields.length === 0
+            ? "ready_for_review"
+            : "collecting_info";
 
         // Create session if needed
         if (!sessionId) {
@@ -265,9 +275,9 @@ export async function POST(req: Request) {
             .insert({
               phone,
               customer_id: customerId,
-              current_step: aiResult.currentStep,
+              current_step: currentStep,
               status: "active",
-              collected_data: aiResult.extractedData,
+              collected_data: data,
             })
             .select()
             .single();
@@ -278,64 +288,56 @@ export async function POST(req: Request) {
         }
 
         if (sessionId) {
-          // Save inbound message
+          // Save messages
           await supabaseAdmin.from("intake_messages").insert({
             session_id: sessionId,
             direction: "inbound",
             message: body,
           });
-
-          // Save outbound message
           await supabaseAdmin.from("intake_messages").insert({
             session_id: sessionId,
             direction: "outbound",
             message: botReply!,
           });
 
-          // Merge extracted data with existing session data
-          const mergedData: Record<string, unknown> = {
-            ...(currentSession?.collected_data || {}),
-            ...aiResult.extractedData,
-            claim_type: aiResult.claimType !== "unknown" ? aiResult.claimType : (currentSession?.collected_data?.claim_type || undefined),
-            readiness_score: aiResult.readinessScore,
-            missing_fields: aiResult.missingFields,
-            missing_documents: aiResult.missingDocuments,
-          };
-
-          // Update session
-          const sessionStatus = aiResult.claimStatus === "done" ? "completed" : "active";
+          // Update session with full updatedData from AI
+          const sessionStatus = aiResult.readyForClaim ? "completed" : "active";
           await supabaseAdmin
             .from("intake_sessions")
             .update({
-              current_step: aiResult.currentStep,
-              collected_data: mergedData,
+              current_step: currentStep,
+              collected_data: data,
               status: sessionStatus,
             })
             .eq("id", sessionId);
 
           console.log("[webhook] Updated session:", {
             sessionId,
-            step: aiResult.currentStep,
+            step: currentStep,
             status: sessionStatus,
-            readiness: aiResult.readinessScore,
+            missingFields: aiResult.missingFields.length,
           });
 
-          // Create claim if AI says so
-          if (aiResult.shouldCreateClaim) {
+          // Create claim if AI says ready
+          if (aiResult.readyForClaim) {
             console.log("[webhook] AI triggered claim creation");
             const claimNumber = `CLM-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 900) + 100)}`;
 
-            const claimType = aiResult.claimType !== "unknown" ? aiResult.claimType : "other";
-            const eventDate = (mergedData.event_date as string) || null;
-            const eventLocation = (mergedData.event_location as string) || null;
-            const description = (mergedData.description as string) || null;
-            const policyNumber = (mergedData.policy_number as string) || null;
-            const vehicleNumber = (mergedData.vehicle_number as string) || (mergedData.plate_number as string) || null;
-            const hasInjuries = !!(mergedData.injuries && mergedData.injuries !== "לא" && mergedData.injuries !== "false");
-            const hasThirdParty = !!(mergedData.involved_parties);
+            const finalClaimType = claimType !== "unknown" ? claimType : "other";
+            const eventDate = (data.event_date as string) || null;
+            const eventLocation = (data.event_location as string) || null;
+            const description = (data.description as string) || null;
+            const policyNumber = (data.policy_number as string) || null;
+            const vehicleNumber = (data.vehicle_number as string) || (data.plate_number as string) || null;
+            const hasInjuries = !!(data.injuries && data.injuries !== "לא" && data.injuries !== "false");
+            const hasThirdParty = !!(data.third_party_details);
 
-            const aiSummary = buildAISummary(mergedData, claimType);
-            const inspectorMessage = buildInspectorMessage(mergedData, claimNumber, claimType);
+            // Calculate missing docs from REQUIRED_DOCUMENTS
+            const requiredDocs = REQUIRED_DOCUMENTS[finalClaimType] || REQUIRED_DOCUMENTS.other;
+            const readinessScore = aiResult.missingFields.length === 0 ? 80 : Math.max(10, 80 - aiResult.missingFields.length * 10);
+
+            const aiSummary = buildAISummary(data, finalClaimType);
+            const inspectorMessage = buildInspectorMessage(data, claimNumber, finalClaimType);
 
             const { data: claim, error: claimErr } = await supabaseAdmin
               .from("claims")
@@ -343,7 +345,7 @@ export async function POST(req: Request) {
                 claim_number: claimNumber,
                 customer_id: customerId,
                 intake_session_id: sessionId,
-                claim_type: claimType,
+                claim_type: finalClaimType,
                 status: "new",
                 event_date: eventDate,
                 event_location: eventLocation,
@@ -353,10 +355,10 @@ export async function POST(req: Request) {
                 injuries: hasInjuries,
                 third_party_involved: hasThirdParty,
                 third_party_details: hasThirdParty
-                  ? { info: (mergedData.involved_parties as string) || "" }
+                  ? { info: (data.third_party_details as string) || "" }
                   : null,
-                missing_documents: aiResult.missingDocuments,
-                readiness_score: aiResult.readinessScore,
+                missing_documents: requiredDocs,
+                readiness_score: readinessScore,
                 ai_summary: aiSummary,
                 inspector_message: inspectorMessage,
               })
@@ -368,14 +370,12 @@ export async function POST(req: Request) {
             } else {
               console.log("[webhook] Created AI claim:", claim?.claim_number);
 
-              // Update the bot reply with the claim number
               const claimNum = claim?.claim_number || claimNumber;
               if (!botReply!.includes(claimNum)) {
                 botReply = botReply! + `\nמספר התביעה שלך: ${claimNum}`;
               }
             }
 
-            // Mark session as completed
             await supabaseAdmin
               .from("intake_sessions")
               .update({ status: "completed" })

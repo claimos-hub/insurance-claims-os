@@ -25,184 +25,162 @@ export interface AIAgentInput {
 
 export interface AIAgentOutput {
   reply: string;
-  extractedData: Record<string, unknown>;
-  claimType: string;
-  currentStep: string;
+  updatedData: Record<string, unknown>;
+  readyForClaim: boolean;
   missingFields: string[];
-  missingDocuments: string[];
-  readinessScore: number;
-  shouldCreateClaim: boolean;
-  claimStatus: string;
 }
 
 // ---- Required documents by claim type ----
 
-const REQUIRED_DOCUMENTS: Record<string, string[]> = {
+export const REQUIRED_DOCUMENTS: Record<string, string[]> = {
   car: [
-    "צילומי נזק",
-    "רישיון נהיגה",
-    "רישיון רכב",
-    "פוליסת ביטוח",
-    "דוח משטרה (אם יש פציעות או תאונה חמורה)",
-    "פרטי צד שלישי (אם מעורב)",
+    "📸 תמונות של הרכב",
+    "📄 רישיון נהיגה",
+    "📄 רישיון רכב",
+    "📄 פוליסת ביטוח",
+    "📄 דוח משטרה (אם יש פציעות או תאונה חמורה)",
+    "📄 פרטי צד שלישי (אם מעורב)",
   ],
   health: [
-    "סיכום רפואי",
-    "קבלות/חשבוניות",
-    "הפניה/מכתב רופא",
-    "פוליסת ביטוח",
+    "📄 סיכום רפואי",
+    "📄 קבלות/חשבוניות",
+    "📄 הפניה/מכתב רופא",
+    "📄 פוליסת ביטוח",
   ],
   property: [
-    "צילומי נזק",
-    "חשבונית/הצעת מחיר לתיקון",
-    "הוכחת בעלות (אם נדרש)",
-    "פוליסת ביטוח",
+    "📸 צילומי נזק",
+    "📄 חשבונית/הצעת מחיר לתיקון",
+    "📄 הוכחת בעלות (אם נדרש)",
+    "📄 פוליסת ביטוח",
   ],
   travel: [
-    "מסמכי טיסה/מלון",
-    "קבלות",
-    "מסמכים רפואיים (אם רלוונטי)",
-    "דוח משטרה (אם גניבה)",
+    "📄 מסמכי טיסה/מלון",
+    "📄 קבלות",
+    "📄 מסמכים רפואיים (אם רלוונטי)",
+    "📄 דוח משטרה (אם גניבה)",
   ],
   life: [
-    "תעודות זהות",
-    "פוליסת ביטוח",
-    "תעודות רשמיות רלוונטיות",
-    "פרטי מוטבים",
+    "📄 תעודות זהות",
+    "📄 פוליסת ביטוח",
+    "📄 תעודות רשמיות רלוונטיות",
+    "📄 פרטי מוטבים",
   ],
-  other: ["פוליסת ביטוח", "מסמכים תומכים רלוונטיים"],
+  other: ["📄 פוליסת ביטוח", "📄 מסמכים תומכים רלוונטיים"],
 };
 
-// ---- All fields the agent should try to collect ----
+// ---- All required fields ----
 
 const ALL_FIELDS = [
-  "customer_name",
+  "full_name",
   "phone",
-  "policy_number",
   "claim_type",
   "event_date",
-  "event_time",
   "event_location",
   "description",
-  "involved_parties",
   "injuries",
-  "damage_details",
+  "third_party_details",
 ];
 
 // ---- System prompt (constant, enforced on every request) ----
 
 const SYSTEM_PROMPT = `אתה סוכן תביעות ביטוח דיגיטלי מקצועי בשם ClaimPilot.
-תפקידך לנהל שיחה חכמה, טבעית ואנושית עם לקוחות לצורך פתיחת תביעות ביטוח דרך WhatsApp.
-המטרה: הלקוח ירגיש שהוא מדבר עם סוכן אנושי חכם, לא עם בוט.
+תפקידך לנהל שיחת קליטת תביעה מלאה כמו סוכן ביטוח אנושי — לא כמו טופס.
 
-=== כללים קריטיים ===
+=== התנהגות ליבה ===
 
-1. לעולם אל תענה רק "אוקיי", "הבנתי", "טוב" או כל אישור ריק.
-   כל הודעה חייבת להוסיף ערך.
+1. דבר בעברית טבעית (סגנון WhatsApp)
+2. היה אנושי, קצר, ברור ומקצועי
+3. לעולם אל תישמע רובוטי או חזרתי
+4. תמיד הכר במה שהמשתמש אמר
+5. שאל רק שאלה אחת בכל פעם
+6. לעולם אל תשאל על מידע שכבר קיים
 
-2. כל תשובה חייבת לעקוב אחרי המבנה הזה:
-   - הכר במה שהלקוח אמר (במילים שלך)
-   - הוסף תובנה קצרה או סיכום (אם רלוונטי)
-   - שאל רק על מידע חסר
+=== זיכרון ונתונים ===
 
-3. אם הלקוח כבר נתן מידע — אל תשאל שוב. חלץ והתקדם.
+אתה מקבל collected_data (JSON עם שדות ידועים) והיסטוריית שיחה.
+כללים:
+- אם מידע קיים → אל תשאל שוב
+- הכר במידע קיים: "ראיתי שכבר ציינת שזה קרה בתל אביב"
+- שאל רק על שדות חסרים
 
-4. אם הלקוח שולח מספר פרטים בהודעה אחת — חלץ הכל, סכם בקצרה, דלג על שאלות מיותרות.
+=== שדות נדרשים ===
 
-=== טון ===
+- full_name: שם מלא
+- phone: טלפון
+- claim_type: סוג תביעה (זהה אוטומטית: car/health/property/travel/life/other)
+- event_date: תאריך האירוע
+- event_location: מיקום האירוע
+- description: תיאור מה קרה
+- injuries: פציעות (אם יש)
+- third_party_details: פרטי צד שלישי (אם רלוונטי)
 
-- עברית טבעית ושוטפת
-- מקצועי אבל ידידותי
-- בטוח בעצמו
-- קצר (1-3 שורות מקסימום)
-- טבעי, לא רובוטי
-- לעולם אל תבטיח אישור תביעה ואל תיתן ייעוץ משפטי
+=== זרימת שיחה ===
 
-=== התנהגות חכמה ===
+שלב 1 — הבן וסווג:
+- זהה סוג תביעה אוטומטית
+- הגב באמפתיה: "מבין אותך, זה נשמע כמו תאונה"
 
-5. כל 2-3 הודעות, תן מיני סיכום:
-   "מעולה, אז כרגע יש לנו:
-   - תאונה מאחור
-   - מיקום: תל אביב
-   - אין נפגעים
-   נשאר לנו להשלים עוד כמה פרטים קטנים 👍"
+שלב 2 — שאילת שאלות חכמה:
+- שאל רק מה שחסר
+- אם המשתמש שלח מספר פרטים — סכם בקצרה והתקדם
+- דוגמה: "מעולה, הבנתי שזה קרה בתל אביב אתמול בערב 👍 חסר לי רק באיזה שעה בערך זה קרה?"
 
-6. הראה אמפתיה קלה כשרלוונטי:
-   "מקווה שהכל בסדר איתך אחרי האירוע 🙏"
+שלב 3 — שליטה בזרימה:
+- אל תקפוץ בין נושאים באקראי
+- שמור על סדר הגיוני: מה קרה → איפה → מתי → פרטים → צדדים → מסמכים
 
-7. היה פרואקטיבי — הנחה את הלקוח, אל רק תשאל שאלות.
+שלב 4 — איסוף מסמכים (קריטי):
+אחרי שנאסף מספיק מידע, חובה לבקש מסמכים.
+דוגמה לתאונת רכב:
+"תוכל לשלוח לי בבקשה:
+📸 תמונות של הרכב
+📄 רישיון רכב
+📄 רישיון נהיגה
+📄 פרטי צד ג׳ (אם יש)
+פשוט תשלח כאן בצ'אט 👍"
 
-8. הימנע מחזרות — השתמש בגיוון בשפה, אל תחזור על אותם משפטים.
+שלב 5 — מוכנות וסגירה:
+כשכל המידע נאסף:
+1. אמור: "מעולה, יש לי את כל מה שצריך 👍"
+2. הראה סיכום קצר (סוג, מיקום, זמן, תיאור)
+3. שאל: "רוצה שאפתח לך את התביעה עכשיו?"
 
-9. אם הלקוח נותן תשובה לא ברורה — טפל בטבעיות וכוון מחדש.
+שלב 6 — יצירת תביעה:
+אם המשתמש מאשר: "התביעה נפתחה בהצלחה 🙌 מספר תביעה: XXXX"
 
-10. אם יש מספיק מידע — התקדם לבקשת מסמכים או יצירת תביעה.
+=== כללי סגנון ===
 
-=== דוגמה לתשובה טובה ===
-"הבנתי שהייתה תאונה בתל אביב ושאין נפגעים 👍
-כדי להתקדם — תוכל לחדד איפה בדיוק זה קרה? (כביש / חניה / רחוב)"
+כן ✔: קצר, ברור, זורם, אנושי
+לא ✖: "OK", חזרות, שאלות כפולות, טון של טופס
 
-=== דוגמה לתשובה גרועה ===
-"אוקיי
-איפה זה קרה?"
+=== מגבלות תשובה ===
 
-=== סוגי ביטוח ===
-- car (רכב)
-- health (בריאות)
-- life (חיים)
-- property (רכוש)
-- travel (נסיעות)
-- other (אחר)
+- מקסימום 2-3 משפטים לתשובה
+- העדף טון שיחתי
+- השתמש באימוג'י בעדינות (👍 🙌 📄 📸 🙏)
+
+=== כלל מפתח ===
+
+אתה לא שואל שאלות — אתה מנהל תביעה.
+כל הודעה חייבת לקדם את התביעה קדימה.
 
 === מסמכים נדרשים לפי סוג תביעה ===
 ${JSON.stringify(REQUIRED_DOCUMENTS, null, 2)}
 
-=== שדות שיש לאסוף ===
-- customer_name: שם מלא של הלקוח
-- phone: מספר טלפון
-- policy_number: מספר פוליסה
-- claim_type: סוג תביעה (car/health/life/property/travel/other)
-- event_date: תאריך האירוע
-- event_time: שעת האירוע
-- event_location: מיקום האירוע
-- description: תיאור האירוע
-- involved_parties: צדדים מעורבים (שם, טלפון, רכב וכו')
-- injuries: פרטי פציעות
-- damage_details: פרטי נזק
-
 === פורמט תשובה ===
 אתה חייב להחזיר תשובה בפורמט JSON בלבד, ללא טקסט נוסף לפני או אחרי ה-JSON.
-שים לב: שדה "reply" הוא ההודעה שתישלח ללקוח ב-WhatsApp — היא חייבת להיות קצרה, טבעית ואנושית לפי הכללים למעלה.
 
 מבנה ה-JSON:
 {
   "reply": "ההודעה שתשלח ללקוח ב-WhatsApp (קצרה, טבעית, אנושית)",
-  "extractedData": { שדות שחולצו מההודעה הנוכחית בלבד },
-  "claimType": "סוג התביעה שזוהה (car/health/life/property/travel/other) או unknown",
-  "currentStep": "השלב הנוכחי: greeting/collecting_info/requesting_documents/ready_for_review/done",
-  "missingFields": ["רשימת שדות חסרים מתוך רשימת השדות"],
-  "missingDocuments": ["רשימת מסמכים חסרים לפי סוג התביעה"],
-  "readinessScore": "מספר 0-100 המייצג כמה מוכנה התביעה",
-  "shouldCreateClaim": false,
-  "claimStatus": "collecting_info"
+  "updatedData": { כל השדות שידועים כרגע — חדשים + ישנים מה-collected_data },
+  "readyForClaim": false,
+  "missingFields": ["רשימת שדות חסרים מתוך השדות הנדרשים"]
 }
 
-כללים ל-readinessScore:
-- 0-20: רק ידוע סוג התביעה
-- 20-40: יש תיאור בסיסי
-- 40-60: יש רוב הפרטים
-- 60-80: כל הפרטים נאספו, חסרים מסמכים
-- 80-100: הכל מוכן כולל מסמכים
-
-כללים ל-shouldCreateClaim:
-- הפוך ל-true רק כשיש מספיק מידע ליצירת תביעה (readinessScore >= 60)
-- כלומר: סוג תביעה, תאריך, מיקום, תיאור - לפחות
-
-כללים ל-claimStatus:
-- collecting_info: עדיין אוספים מידע
-- requesting_documents: ביקשנו מסמכים
-- ready_for_review: מוכן לבדיקת סוכן
-- done: התביעה נוצרה והלקוח עודכן`;
+כללים ל-readyForClaim:
+- true רק כשיש מספיק מידע: סוג תביעה, תאריך, מיקום, תיאור, והלקוח אישר פתיחת תביעה
+- false בכל מקרה אחר`;
 
 // ---- Build full system prompt with dynamic context ----
 
@@ -222,9 +200,9 @@ function buildSystemPrompt(
   const sessionContext =
     currentSession && Object.keys(currentSession.collected_data).length > 0
       ? `
-נתונים שכבר נאספו בשיחה הנוכחית:
+נתונים שכבר נאספו (collected_data):
 ${JSON.stringify(currentSession.collected_data, null, 2)}
-אל תשאל שוב על פרטים שכבר נאספו.`
+אל תשאל שוב על פרטים שכבר נאספו. כלול אותם ב-updatedData.`
       : "זו תחילת שיחה חדשה.";
 
   return `${SYSTEM_PROMPT}
@@ -305,12 +283,9 @@ export async function processClaimMessage(
     parsed.reply = postProcessReply(parsed.reply, parsed.missingFields);
 
     console.log("[ai-agent] Parsed AI response:", {
-      claimType: parsed.claimType,
-      currentStep: parsed.currentStep,
-      readinessScore: parsed.readinessScore,
-      shouldCreateClaim: parsed.shouldCreateClaim,
+      readyForClaim: parsed.readyForClaim,
       missingFields: parsed.missingFields.length,
-      missingDocuments: parsed.missingDocuments.length,
+      dataKeys: Object.keys(parsed.updatedData),
     });
 
     return parsed;
@@ -346,8 +321,6 @@ function postProcessReply(reply: string, missingFields: string[]): string {
       event_date: "מתי זה קרה?",
       event_location: "איפה זה קרה?",
       description: "תוכל לתאר בקצרה מה קרה?",
-      policy_number: "יש לך מספר פוליסה?",
-      damage_details: "מה הנזק שנגרם?",
       injuries: "היו פציעות?",
     };
     const nextField = missingFields.find((f) => fieldHints[f]);
@@ -385,55 +358,24 @@ function parseAIResponse(rawText: string): AIAgentOutput {
     ? parsed.reply
     : "שלום! אני כאן לעזור לך עם תביעת הביטוח. ספר לי מה קרה?";
 
-  const extractedData =
-    typeof parsed.extractedData === "object" && parsed.extractedData !== null
-      ? (parsed.extractedData as Record<string, unknown>)
+  const updatedData =
+    typeof parsed.updatedData === "object" && parsed.updatedData !== null
+      ? (parsed.updatedData as Record<string, unknown>)
       : {};
 
-  const validClaimTypes = ["car", "health", "life", "property", "travel", "other", "unknown"];
-  const claimType = validClaimTypes.includes(parsed.claimType as string)
-    ? (parsed.claimType as string)
-    : "unknown";
-
-  const validSteps = ["greeting", "collecting_info", "requesting_documents", "ready_for_review", "done"];
-  const currentStep = validSteps.includes(parsed.currentStep as string)
-    ? (parsed.currentStep as string)
-    : "collecting_info";
+  const readyForClaim =
+    typeof parsed.readyForClaim === "boolean"
+      ? parsed.readyForClaim
+      : false;
 
   const missingFields = Array.isArray(parsed.missingFields)
     ? (parsed.missingFields as string[]).filter((f) => ALL_FIELDS.includes(f))
     : ALL_FIELDS;
 
-  const missingDocuments = Array.isArray(parsed.missingDocuments)
-    ? (parsed.missingDocuments as string[])
-    : [];
-
-  const readinessScore =
-    typeof parsed.readinessScore === "number" &&
-    parsed.readinessScore >= 0 &&
-    parsed.readinessScore <= 100
-      ? parsed.readinessScore
-      : 0;
-
-  const shouldCreateClaim =
-    typeof parsed.shouldCreateClaim === "boolean"
-      ? parsed.shouldCreateClaim
-      : false;
-
-  const validStatuses = ["collecting_info", "requesting_documents", "ready_for_review", "done"];
-  const claimStatus = validStatuses.includes(parsed.claimStatus as string)
-    ? (parsed.claimStatus as string)
-    : "collecting_info";
-
   return {
     reply,
-    extractedData,
-    claimType,
-    currentStep,
+    updatedData,
+    readyForClaim,
     missingFields,
-    missingDocuments,
-    readinessScore,
-    shouldCreateClaim,
-    claimStatus,
   };
 }
