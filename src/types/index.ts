@@ -131,21 +131,30 @@ export const RETENTION_STATUS_COLORS: Record<RetentionStatus, string> = {
 export interface CustomerPolicy {
   id: string;
   customer_id: string;
-  type: ClaimType;
+  insurance_type: string;
+  provider: string;
   policy_number: string;
-  insurance_company: string;
-  discount_percent: number;
-  discount_expiry: string; // ISO date
-  is_active: boolean;
+  start_date: string;
+  end_date: string;
+  discount_end_date: string | null;
+  status: "active" | "expiring" | "expired";
+  created_at: string;
+}
+
+export interface EnrichedPolicy extends CustomerPolicy {
+  days_until_end: number;
+  days_until_discount_end: number | null;
+  discount_expiring: boolean;
 }
 
 export interface CustomerRetentionInfo {
   customer: Customer;
-  policies: CustomerPolicy[];
+  policies: EnrichedPolicy[];
   activePoliciesCount: number;
   nearestDiscountExpiry: string | null;
   daysUntilExpiry: number | null;
   retentionStatus: RetentionStatus;
+  hasDiscountExpiring: boolean;
 }
 
 // --- Intake Conversation Types ---

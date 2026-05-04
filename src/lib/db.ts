@@ -68,6 +68,34 @@ export interface DbClaimDocument {
   created_at: string;
 }
 
+export type PolicyStatus = "active" | "expiring" | "expired";
+
+export interface DbPolicy {
+  id: string;
+  customer_id: string;
+  insurance_type: string;
+  provider: string;
+  policy_number: string;
+  start_date: string;
+  end_date: string;
+  discount_end_date: string | null;
+  status: PolicyStatus;
+  created_at: string;
+  // Joined
+  customer?: DbCustomer;
+}
+
+export interface RetentionAlert {
+  customer: DbCustomer;
+  policies: (DbPolicy & {
+    days_until_end: number;
+    days_until_discount_end: number | null;
+    discount_expiring: boolean;
+  })[];
+  most_urgent_days: number;
+  has_discount_expiring: boolean;
+}
+
 // ---- Customer operations ----
 
 export async function findOrCreateCustomer(phone: string): Promise<DbCustomer | null> {
@@ -419,4 +447,140 @@ export async function getDashboardStatsFromDb(): Promise<{
     totalSessions: totalSessions || 0,
     activeSessions: activeSessions || 0,
   };
+}
+
+// ---- Policy & Retention operations ----
+
+function diffDays(dateStr: string): number {
+  const target = new Date(dateStr + "T00:00:00Z");
+  const now = new Date();
+  now.setUTCHours(0, 0, 0, 0);
+  return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function computePolicyStatus(endDate: string): PolicyStatus {
+  const days = diffDays(endDate);
+  if (days < 0) return "expired";
+  if (days <= 30) return "expiring";
+  return "active";
+}
+
+export async function getAllPolicies(): Promise<DbPolicy[]> {
+  if (!isSupabaseConfigured() || !supabaseAdmin) return [];
+
+  const { data, error } = await supabaseAdmin
+    .from("policies")
+    .select("*, customer:customers(*)")
+    .order("end_date", { ascending: true });
+
+  if (error) {
+    console.error("Error fetching policies:", error);
+    return [];
+  }
+  return (data || []) as DbPolicy[];
+}
+
+export async function getCustomerPoliciesFromDb(customerId: string): Promise<DbPolicy[]> {
+  if (!isSupabaseConfigured() || !supabaseAdmin) return [];
+
+  const { data, error } = await supabaseAdmin
+    .from("policies")
+    .select("*")
+    .eq("customer_id", customerId)
+    .order("end_date", { ascending: true });
+
+  if (error) {
+    console.error("Error fetching customer policies:", error);
+    return [];
+  }
+  return (data || []) as DbPolicy[];
+}
+
+export async function syncPolicyStatuses(): Promise<void> {
+  if (!isSupabaseConfigured() || !supabaseAdmin) return;
+
+  const { data: policies } = await supabaseAdmin
+    .from("policies")
+    .select("id, end_date, status");
+
+  if (!policies) return;
+
+  for (const p of policies) {
+    const correctStatus = computePolicyStatus(p.end_date);
+    if (p.status !== correctStatus) {
+      await supabaseAdmin
+        .from("policies")
+        .update({ status: correctStatus })
+        .eq("id", p.id);
+    }
+  }
+}
+
+export async function getRetentionAlerts(): Promise<RetentionAlert[]> {
+  if (!isSupabaseConfigured() || !supabaseAdmin) return [];
+
+  // Sync statuses first
+  await syncPolicyStatuses();
+
+  // Get all non-expired policies with their customers
+  const { data, error } = await supabaseAdmin
+    .from("policies")
+    .select("*, customer:customers(*)")
+    .in("status", ["active", "expiring"])
+    .order("end_date", { ascending: true });
+
+  if (error) {
+    console.error("Error fetching retention alerts:", error);
+    return [];
+  }
+
+  const policies = (data || []) as (DbPolicy & { customer: DbCustomer })[];
+
+  // Group by customer
+  const byCustomer = new Map<string, { customer: DbCustomer; policies: typeof policies }>();
+
+  for (const p of policies) {
+    if (!p.customer) continue;
+    const existing = byCustomer.get(p.customer_id);
+    if (existing) {
+      existing.policies.push(p);
+    } else {
+      byCustomer.set(p.customer_id, { customer: p.customer, policies: [p] });
+    }
+  }
+
+  // Build alerts — only include customers with at least one expiring policy or expiring discount
+  const alerts: RetentionAlert[] = [];
+
+  for (const [, group] of byCustomer) {
+    const enriched = group.policies.map((p) => {
+      const daysEnd = diffDays(p.end_date);
+      const daysDiscount = p.discount_end_date ? diffDays(p.discount_end_date) : null;
+      return {
+        ...p,
+        days_until_end: daysEnd,
+        days_until_discount_end: daysDiscount,
+        discount_expiring: daysDiscount !== null && daysDiscount >= 0 && daysDiscount <= 14,
+      };
+    });
+
+    const hasExpiring = enriched.some((p) => p.days_until_end >= 0 && p.days_until_end <= 30);
+    const hasDiscountExpiring = enriched.some((p) => p.discount_expiring);
+
+    if (hasExpiring || hasDiscountExpiring) {
+      const urgentDays = Math.min(...enriched.map((p) => p.days_until_end).filter((d) => d >= 0));
+
+      alerts.push({
+        customer: group.customer,
+        policies: enriched,
+        most_urgent_days: urgentDays === Infinity ? 999 : urgentDays,
+        has_discount_expiring: hasDiscountExpiring,
+      });
+    }
+  }
+
+  // Sort by urgency
+  alerts.sort((a, b) => a.most_urgent_days - b.most_urgent_days);
+
+  return alerts;
 }

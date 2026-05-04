@@ -441,9 +441,109 @@ package.json                  # נוסף: @anthropic-ai/sdk
 
 ---
 
+### 2026-05-01 — שדרוג System Prompt + תיקון באגים
+
+**שלב 29 — שדרוג System Prompt:**
+- Prompt חדש לשיחה טבעית בעברית (סגנון WhatsApp, לא טופס)
+- 6 שלבי שיחה: סיווג → שאלות חכמות → שליטה בזרימה → מסמכים → מוכנות → יצירת תביעה
+- כלל: רק שאלה אחת בכל פעם, אמפתיה, מיני-סיכומים
+
+**שלב 30 — Refactor ל-`const SYSTEM_PROMPT`:**
+- הפרדת prompt קבוע (module-level) מהקשר דינמי (customer + session)
+- `buildSystemPrompt()` מוסיף הקשר לקוח ו-session בנפרד
+
+**שלב 31 — Post-processing לתשובות AI:**
+- חסימת תשובות ריקות: "OK", "אוקיי", "בסדר" — מוחלפות ב-fallback
+- העשרת תשובות קצרות (<15 תווים) עם שאלת המשך לשדה הבא
+- `postProcessReply()` כרשת ביטחון מעל ה-AI
+
+**שלב 32 — תיקון באג Twilio "OK":**
+- בעיה: Twilio שלח "OK" כהודעת WhatsApp אחרי כל תשובת AI
+- סיבה: `return new Response("OK")` — Twilio מפרש body לא-TwiML כהודעה
+- פתרון: `return new Response("<Response></Response>", { headers: { "Content-Type": "text/xml" } })`
+
+**שלב 33 — שכתוב מלא של פורמט JSON:**
+- פורמט חדש מפושט: `{ reply, updatedData, readyForClaim, missingFields }`
+- Webhook מחשב `claimType`, `readinessScore`, `currentStep` מ-`updatedData`
+- `REQUIRED_DOCUMENTS` מיוצא עם אימוג'י (📸📄)
+
+**קבצים שהשתנו:**
+```
+src/lib/ai-claims-agent.ts    # שכתוב מלא: system prompt, post-processing, JSON output
+src/app/api/webhook/route.ts  # TwiML response, persistence מותאם לפורמט חדש
+```
+
+**סטטוס:** AI agent משודרג ועובד ב-production. Twilio bug תוקן. הבילד עובר.
+
+---
+
+### 2026-05-04 — מערכת שימור לקוחות ופוליסות (Retention System)
+
+**שלב 34 — Retention Alerts בדף לקוחות (UI):**
+- 4 כרטיסי סיכום: סה״כ לקוחות, פוליסות פגות ב-7/30 ימים, שיחות שימור פתוחות
+- פילטרים: כל הלקוחות / דורש שיחה / דחוף / טופל
+- Badge צבעוני לכל לקוח: ירוק (תקין), כתום (דורש שיחה), אדום (דחוף), אפור (טופל)
+- כפתור "הכן שיחת שימור" — פותח מודאל עם תסריט שיחה בעברית
+- תסריט כולל: שם לקוח, סוג פוליסה, חברת ביטוח, תאריך פקיעה — עם כפתור העתקה
+- Mock data: 7 פוליסות על 4 לקוחות עם תאריכי פקיעה שונים
+
+**שלב 35 — טבלת Policies ב-Supabase:**
+- Migration SQL: `supabase/migrations/20260504_create_policies.sql`
+- עמודות: `id`, `customer_id` (FK), `insurance_type`, `provider`, `policy_number`, `start_date`, `end_date`, `discount_end_date`, `status`, `created_at`
+- Indexes: `customer_id`, `end_date`, `discount_end_date`, `status`
+- Check constraint: `status in ('active', 'expiring', 'expired')`
+
+**שלב 36 — DB Layer לפוליסות ושימור:**
+- `DbPolicy` type + `RetentionAlert` type
+- `getAllPolicies()`, `getCustomerPoliciesFromDb()`
+- `syncPolicyStatuses()` — עדכון אוטומטי: `end_date` עבר = `expired`, תוך 30 יום = `expiring`
+- `getRetentionAlerts()` — מחזיר לקוחות עם פוליסות/הנחות שפגות, ממוין לפי דחיפות
+
+**שלב 37 — Retention Logic:**
+- אם `end_date` תוך 30 יום → status = `expiring`
+- אם `end_date` עבר → status = `expired`
+- אם `discount_end_date` תוך 14 יום → flag `discount_expiring`
+- UI: badge אדום (≤7 ימים), כתום (≤30 ימים), ירוק (>30 ימים)
+
+**שלב 38 — API Route `GET /api/retention-alerts`:**
+- מחזיר: לקוחות עם פוליסות שפגות + הנחות שפגות
+- Summary: total alerts, expiring in 7d/30d, discount expiring
+- Supabase-first עם fallback ל-mock data
+
+**שלב 39 — שדרוג UI עם נתוני פוליסות:**
+- כל כרטיס לקוח מציג: רשימת פוליסות מיני עם סוג, חברה, וימים לפקיעה
+- Badge "הנחה עומדת לפוג!" עם אייקון Percent
+- `DaysLeftBadge` component: אדום/כתום/ירוק/אפור
+
+**Types חדשים:**
+```
+CustomerPolicy, EnrichedPolicy, CustomerRetentionInfo
+RetentionStatus: "ok" | "needs_call" | "urgent" | "handled"
+DbPolicy, RetentionAlert (DB layer)
+```
+
+**קבצים חדשים:**
+```
+supabase/migrations/20260504_create_policies.sql   # Migration
+src/app/api/retention-alerts/route.ts              # API route
+```
+
+**קבצים שהשתנו:**
+```
+src/types/index.ts           # טיפוסי retention + policy
+src/lib/db.ts                # DbPolicy, retention alerts, sync statuses
+src/lib/mock-data.ts         # Mock policies (new schema), enrichment, call script
+src/app/customers/page.tsx   # Full retention UI: summary, filters, badges, modal, policy list
+```
+
+**סטטוס:** מערכת שימור מלאה — DB, API, UI. הבילד עובר. נדרש להריץ migration ב-Supabase.
+
+---
+
 ## Next Steps
 
-- [ ] הוספת ANTHROPIC_API_KEY ב-Vercel ובדיקת AI agent ב-production
+- [ ] הרצת migration של טבלת policies ב-Supabase
+- [ ] הכנסת נתוני פוליסות אמיתיים לטבלה
 - [ ] העלאת קבצים ל-Supabase Storage (תמונות, מסמכים)
 - [ ] שליחת הודעה אמיתית למפקח (email/WhatsApp)
 - [ ] חילוץ שם לקוח מפרופיל WhatsApp

@@ -16,6 +16,7 @@ import {
   X,
   Copy,
   Check,
+  Percent,
 } from "lucide-react";
 import {
   mockCustomers,
@@ -28,6 +29,8 @@ import {
   RETENTION_STATUS_LABELS,
   RETENTION_STATUS_COLORS,
   CustomerRetentionInfo,
+  CLAIM_TYPE_LABELS,
+  ClaimType,
 } from "@/types";
 
 const FILTER_OPTIONS: { value: RetentionStatus | "all"; label: string }[] = [
@@ -95,13 +98,13 @@ export default function CustomersPage() {
         />
         <SummaryCard
           icon={<AlertTriangle className="w-5 h-5 text-red-600" />}
-          label="הנחות פגות ב-7 ימים"
+          label="פוליסות פגות ב-7 ימים"
           value={expiring7}
           bg="bg-red-50"
         />
         <SummaryCard
           icon={<CalendarClock className="w-5 h-5 text-amber-600" />}
-          label="הנחות פגות ב-30 ימים"
+          label="פוליסות פגות ב-30 ימים"
           value={expiring30}
           bg="bg-amber-50"
         />
@@ -195,28 +198,47 @@ export default function CustomersPage() {
                   </span>
                   <span className="font-semibold">{info.activePoliciesCount}</span>
                 </div>
-                {info.nearestDiscountExpiry && (
+                {info.daysUntilExpiry !== null && (
                   <div className="flex items-center justify-between">
                     <span className="flex items-center gap-1.5 text-gray-600">
                       <Clock className="w-3.5 h-3.5" />
-                      הנחה קרובה לפקיעה
+                      ימים לפקיעת פוליסה
                     </span>
-                    <span
-                      className={`font-semibold ${
-                        info.daysUntilExpiry !== null && info.daysUntilExpiry <= 7
-                          ? "text-red-600"
-                          : info.daysUntilExpiry !== null && info.daysUntilExpiry <= 30
-                          ? "text-amber-600"
-                          : "text-gray-900"
-                      }`}
-                    >
-                      {info.daysUntilExpiry !== null && info.daysUntilExpiry >= 0
-                        ? `${info.daysUntilExpiry} ימים`
-                        : "פג תוקף"}
+                    <DaysLeftBadge days={info.daysUntilExpiry} />
+                  </div>
+                )}
+                {info.hasDiscountExpiring && (
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 text-amber-600">
+                      <Percent className="w-3.5 h-3.5" />
+                      הנחה עומדת לפוג!
+                    </span>
+                    <span className="text-xs font-medium text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                      תוך 14 יום
                     </span>
                   </div>
                 )}
               </div>
+
+              {/* Policy list mini */}
+              {info.policies.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {info.policies.map((p) => (
+                    <div key={p.id} className="flex items-center justify-between text-xs text-gray-500 px-1">
+                      <span>
+                        {CLAIM_TYPE_LABELS[p.insurance_type as ClaimType] || p.insurance_type} — {p.provider}
+                      </span>
+                      <span className={
+                        p.days_until_end <= 7 ? "text-red-600 font-semibold" :
+                        p.days_until_end <= 30 ? "text-amber-600 font-semibold" :
+                        "text-gray-500"
+                      }>
+                        {p.days_until_end >= 0 ? `${p.days_until_end} ימים` : "פג"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* Footer */}
               <div className="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between">
@@ -341,4 +363,17 @@ function RetentionBadge({ status }: { status: RetentionStatus }) {
       {RETENTION_STATUS_LABELS[status]}
     </span>
   );
+}
+
+function DaysLeftBadge({ days }: { days: number }) {
+  if (days < 0) {
+    return <span className="text-xs font-semibold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">פג תוקף</span>;
+  }
+  if (days <= 7) {
+    return <span className="text-xs font-semibold text-red-700 bg-red-100 px-2 py-0.5 rounded-full">{days} ימים</span>;
+  }
+  if (days <= 30) {
+    return <span className="text-xs font-semibold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">{days} ימים</span>;
+  }
+  return <span className="text-xs font-semibold text-green-700 bg-green-100 px-2 py-0.5 rounded-full">{days} ימים</span>;
 }

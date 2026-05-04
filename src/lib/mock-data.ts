@@ -1,4 +1,4 @@
-import { Claim, Customer, ClaimDocument, MissingDocument, ClaimNote, ActivityEvent, CLAIM_TYPE_LABELS, CLAIM_STATUS_LABELS, CustomerPolicy, CustomerRetentionInfo, RetentionStatus } from "@/types";
+import { Claim, Customer, ClaimDocument, MissingDocument, ClaimNote, ActivityEvent, CLAIM_TYPE_LABELS, CLAIM_STATUS_LABELS, CustomerPolicy, EnrichedPolicy, CustomerRetentionInfo, RetentionStatus } from "@/types";
 
 export const mockCustomers: Customer[] = [
   {
@@ -577,80 +577,101 @@ function daysFromNow(days: number): string {
   return d.toISOString().split("T")[0];
 }
 
+function diffDays(dateStr: string): number {
+  const target = new Date(dateStr + "T00:00:00Z");
+  const now = new Date();
+  now.setUTCHours(0, 0, 0, 0);
+  return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+}
+
 export const mockPolicies: CustomerPolicy[] = [
-  // יוסי כהן — 2 policies, one expiring in 5 days (urgent)
+  // יוסי כהן — 2 policies: car end in 5 days (urgent), life end in 90 days, discount in 12 days
   {
     id: "pol1",
     customer_id: "c1",
-    type: "car",
+    insurance_type: "car",
+    provider: "הראל ביטוח",
     policy_number: "POL-CAR-12345",
-    insurance_company: "הראל ביטוח",
-    discount_percent: 15,
-    discount_expiry: daysFromNow(5),
-    is_active: true,
+    start_date: "2025-05-10",
+    end_date: daysFromNow(5),
+    discount_end_date: daysFromNow(5),
+    status: "expiring",
+    created_at: "2025-05-10T00:00:00Z",
   },
   {
     id: "pol2",
     customer_id: "c1",
-    type: "life",
+    insurance_type: "life",
+    provider: "הפניקס ביטוח",
     policy_number: "POL-LIFE-22222",
-    insurance_company: "הפניקס ביטוח",
-    discount_percent: 10,
-    discount_expiry: daysFromNow(90),
-    is_active: true,
+    start_date: "2025-08-01",
+    end_date: daysFromNow(90),
+    discount_end_date: daysFromNow(12),
+    status: "active",
+    created_at: "2025-08-01T00:00:00Z",
   },
-  // שרה לוי — 2 policies, one expiring in 20 days (needs_call)
+  // שרה לוי — 2 policies: health end in 20 days (needs_call), car end in 45 days
   {
     id: "pol3",
     customer_id: "c2",
-    type: "health",
+    insurance_type: "health",
+    provider: "כלל ביטוח",
     policy_number: "POL-HEALTH-67890",
-    insurance_company: "כלל ביטוח",
-    discount_percent: 20,
-    discount_expiry: daysFromNow(20),
-    is_active: true,
+    start_date: "2025-06-01",
+    end_date: daysFromNow(20),
+    discount_end_date: daysFromNow(10),
+    status: "expiring",
+    created_at: "2025-06-01T00:00:00Z",
   },
   {
     id: "pol4",
     customer_id: "c2",
-    type: "car",
+    insurance_type: "car",
+    provider: "הראל ביטוח",
     policy_number: "POL-CAR-44444",
-    insurance_company: "הראל ביטוח",
-    discount_percent: 12,
-    discount_expiry: daysFromNow(45),
-    is_active: true,
+    start_date: "2025-07-15",
+    end_date: daysFromNow(45),
+    discount_end_date: null,
+    status: "active",
+    created_at: "2025-07-15T00:00:00Z",
   },
-  // דוד ישראלי — 1 policy, expiring in 60 days (ok)
+  // דוד ישראלי — 1 policy, end in 60 days (ok)
   {
     id: "pol5",
     customer_id: "c3",
-    type: "property",
+    insurance_type: "property",
+    provider: "מגדל ביטוח",
     policy_number: "POL-PROP-11111",
-    insurance_company: "מגדל ביטוח",
-    discount_percent: 8,
-    discount_expiry: daysFromNow(60),
-    is_active: true,
+    start_date: "2025-09-01",
+    end_date: daysFromNow(60),
+    discount_end_date: daysFromNow(55),
+    status: "active",
+    created_at: "2025-09-01T00:00:00Z",
   },
-  // רונית אברהם — 1 policy, expiring in 3 days (urgent), 1 handled
+  // רונית אברהם — travel end in 3 days (urgent), car already expired
   {
     id: "pol6",
     customer_id: "c4",
-    type: "travel",
+    insurance_type: "travel",
+    provider: "ביטוח ישיר",
     policy_number: "POL-TRV-33333",
-    insurance_company: "ביטוח ישיר",
-    discount_percent: 25,
-    discount_expiry: daysFromNow(3),
-    is_active: true,
+    start_date: "2025-04-01",
+    end_date: daysFromNow(3),
+    discount_end_date: daysFromNow(3),
+    status: "expiring",
+    created_at: "2025-04-01T00:00:00Z",
   },
   {
     id: "pol7",
     customer_id: "c4",
-    type: "car",
+    insurance_type: "car",
+    provider: "מגדל ביטוח",
     policy_number: "POL-CAR-55555",
-    insurance_company: "מגדל ביטוח",
-    discount_percent: 10,
-    discount_expiry: daysFromNow(-10), // already expired
-    is_active: false,
+    start_date: "2024-05-01",
+    end_date: daysFromNow(-10),
+    discount_end_date: null,
+    status: "expired",
+    created_at: "2024-05-01T00:00:00Z",
   },
 ];
 
@@ -658,36 +679,49 @@ export function getCustomerPolicies(customerId: string): CustomerPolicy[] {
   return mockPolicies.filter((p) => p.customer_id === customerId);
 }
 
-function computeRetentionStatus(daysUntilExpiry: number | null): RetentionStatus {
-  if (daysUntilExpiry === null) return "ok";
-  if (daysUntilExpiry <= 7) return "urgent";
-  if (daysUntilExpiry <= 30) return "needs_call";
+function enrichPolicy(p: CustomerPolicy): EnrichedPolicy {
+  const daysEnd = diffDays(p.end_date);
+  const daysDiscount = p.discount_end_date ? diffDays(p.discount_end_date) : null;
+  return {
+    ...p,
+    days_until_end: daysEnd,
+    days_until_discount_end: daysDiscount,
+    discount_expiring: daysDiscount !== null && daysDiscount >= 0 && daysDiscount <= 14,
+  };
+}
+
+function computeRetentionStatus(daysUntilExpiry: number | null, hasDiscountExpiring: boolean): RetentionStatus {
+  if (daysUntilExpiry !== null && daysUntilExpiry <= 7) return "urgent";
+  if (hasDiscountExpiring) return "urgent";
+  if (daysUntilExpiry !== null && daysUntilExpiry <= 30) return "needs_call";
   return "ok";
 }
 
 export function getCustomerRetentionInfo(customer: Customer): CustomerRetentionInfo {
   const policies = getCustomerPolicies(customer.id);
-  const activePolicies = policies.filter((p) => p.is_active);
+  const activePolicies = policies.filter((p) => p.status !== "expired");
+  const enriched = activePolicies.map(enrichPolicy);
 
   let nearestExpiry: string | null = null;
   let daysUntil: number | null = null;
 
-  for (const p of activePolicies) {
-    const expDate = new Date(p.discount_expiry);
-    const diffDays = Math.ceil((expDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-    if (daysUntil === null || diffDays < daysUntil) {
-      daysUntil = diffDays;
-      nearestExpiry = p.discount_expiry;
+  for (const p of enriched) {
+    if (p.days_until_end >= 0 && (daysUntil === null || p.days_until_end < daysUntil)) {
+      daysUntil = p.days_until_end;
+      nearestExpiry = p.end_date;
     }
   }
 
+  const hasDiscountExpiring = enriched.some((p) => p.discount_expiring);
+
   return {
     customer,
-    policies,
+    policies: enriched,
     activePoliciesCount: activePolicies.length,
     nearestDiscountExpiry: nearestExpiry,
     daysUntilExpiry: daysUntil,
-    retentionStatus: computeRetentionStatus(daysUntil),
+    retentionStatus: computeRetentionStatus(daysUntil, hasDiscountExpiring),
+    hasDiscountExpiring,
   };
 }
 
@@ -696,27 +730,30 @@ export function getAllRetentionInfo(): CustomerRetentionInfo[] {
 }
 
 export function generateRetentionCallScript(info: CustomerRetentionInfo): string {
-  const expiringPolicies = info.policies.filter((p) => {
-    if (!p.is_active) return false;
-    const diff = Math.ceil((new Date(p.discount_expiry).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-    return diff <= 30;
-  });
+  const expiringPolicies = info.policies.filter(
+    (p) => p.days_until_end <= 30 || p.discount_expiring
+  );
 
   const policyLines = expiringPolicies.map((p) => {
-    const typeLabel = CLAIM_TYPE_LABELS[p.type];
-    const expiryDate = new Date(p.discount_expiry).toLocaleDateString("he-IL");
-    return `  - ${typeLabel} (${p.insurance_company}) — הנחה ${p.discount_percent}% פגה ב-${expiryDate}`;
+    const typeLabel = CLAIM_TYPE_LABELS[p.insurance_type as keyof typeof CLAIM_TYPE_LABELS] || p.insurance_type;
+    const endDate = new Date(p.end_date).toLocaleDateString("he-IL");
+    let line = `  - ${typeLabel} (${p.provider}) — פג תוקף ב-${endDate}`;
+    if (p.discount_expiring && p.discount_end_date) {
+      const discountDate = new Date(p.discount_end_date).toLocaleDateString("he-IL");
+      line += ` | הנחה פגה ב-${discountDate}`;
+    }
+    return line;
   }).join("\n");
 
   return `שלום ${info.customer.full_name},
 
 שמי [שם הסוכן] מסוכנות ClaimPilot.
 
-אני פונה אליך כי שמתי לב שיש ${expiringPolicies.length === 1 ? "פוליסה אחת" : `${expiringPolicies.length} פוליסות`} שההנחה עליה${expiringPolicies.length === 1 ? "" : "ן"} עומדת לפוג בקרוב:
+אני פונה אליך כי שמתי לב שיש ${expiringPolicies.length === 1 ? "פוליסה אחת" : `${expiringPolicies.length} פוליסות`} שעומד${expiringPolicies.length === 1 ? "ת" : "ות"} לפוג בקרוב:
 
 ${policyLines}
 
-רציתי לוודא שאת/ה מודע/ת לזה ולהציע שנבדוק יחד את אפשרויות החידוש — כדי שלא תפסידו את ההנחה.
+רציתי לוודא שאת/ה מודע/ת לזה ולהציע שנבדוק יחד את אפשרויות החידוש — כדי שלא תפסיד/י את הכיסוי או ההנחה.
 
 יש לי כמה מסלולים שיכולים להתאים. מתי נוח לך לשיחה קצרה של כמה דקות?
 
