@@ -110,6 +110,44 @@ export const CLAIM_TYPE_LABELS: Record<ClaimType, string> = {
   other: "אחר",
 };
 
+// --- Retention / Policy Types ---
+
+export type RetentionStatus = "ok" | "needs_call" | "urgent" | "handled";
+
+export const RETENTION_STATUS_LABELS: Record<RetentionStatus, string> = {
+  ok: "תקין",
+  needs_call: "דורש שיחה",
+  urgent: "דחוף",
+  handled: "טופל",
+};
+
+export const RETENTION_STATUS_COLORS: Record<RetentionStatus, string> = {
+  ok: "bg-green-100 text-green-800",
+  needs_call: "bg-amber-100 text-amber-800",
+  urgent: "bg-red-100 text-red-800",
+  handled: "bg-gray-100 text-gray-800",
+};
+
+export interface CustomerPolicy {
+  id: string;
+  customer_id: string;
+  type: ClaimType;
+  policy_number: string;
+  insurance_company: string;
+  discount_percent: number;
+  discount_expiry: string; // ISO date
+  is_active: boolean;
+}
+
+export interface CustomerRetentionInfo {
+  customer: Customer;
+  policies: CustomerPolicy[];
+  activePoliciesCount: number;
+  nearestDiscountExpiry: string | null;
+  daysUntilExpiry: number | null;
+  retentionStatus: RetentionStatus;
+}
+
 // --- Intake Conversation Types ---
 
 export interface CarAccidentIntakeData {

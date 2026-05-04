@@ -1,4 +1,4 @@
-import { Claim, Customer, ClaimDocument, MissingDocument, ClaimNote, ActivityEvent, CLAIM_TYPE_LABELS, CLAIM_STATUS_LABELS } from "@/types";
+import { Claim, Customer, ClaimDocument, MissingDocument, ClaimNote, ActivityEvent, CLAIM_TYPE_LABELS, CLAIM_STATUS_LABELS, CustomerPolicy, CustomerRetentionInfo, RetentionStatus } from "@/types";
 
 export const mockCustomers: Customer[] = [
   {
@@ -566,6 +566,162 @@ ${claim.insurance_company}
 
 בברכה,
 סוכנות ביטוח ClaimPilot`;
+}
+
+// --- Mock Policies & Retention Data ---
+
+// Helper: get a date N days from now as ISO string
+function daysFromNow(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split("T")[0];
+}
+
+export const mockPolicies: CustomerPolicy[] = [
+  // יוסי כהן — 2 policies, one expiring in 5 days (urgent)
+  {
+    id: "pol1",
+    customer_id: "c1",
+    type: "car",
+    policy_number: "POL-CAR-12345",
+    insurance_company: "הראל ביטוח",
+    discount_percent: 15,
+    discount_expiry: daysFromNow(5),
+    is_active: true,
+  },
+  {
+    id: "pol2",
+    customer_id: "c1",
+    type: "life",
+    policy_number: "POL-LIFE-22222",
+    insurance_company: "הפניקס ביטוח",
+    discount_percent: 10,
+    discount_expiry: daysFromNow(90),
+    is_active: true,
+  },
+  // שרה לוי — 2 policies, one expiring in 20 days (needs_call)
+  {
+    id: "pol3",
+    customer_id: "c2",
+    type: "health",
+    policy_number: "POL-HEALTH-67890",
+    insurance_company: "כלל ביטוח",
+    discount_percent: 20,
+    discount_expiry: daysFromNow(20),
+    is_active: true,
+  },
+  {
+    id: "pol4",
+    customer_id: "c2",
+    type: "car",
+    policy_number: "POL-CAR-44444",
+    insurance_company: "הראל ביטוח",
+    discount_percent: 12,
+    discount_expiry: daysFromNow(45),
+    is_active: true,
+  },
+  // דוד ישראלי — 1 policy, expiring in 60 days (ok)
+  {
+    id: "pol5",
+    customer_id: "c3",
+    type: "property",
+    policy_number: "POL-PROP-11111",
+    insurance_company: "מגדל ביטוח",
+    discount_percent: 8,
+    discount_expiry: daysFromNow(60),
+    is_active: true,
+  },
+  // רונית אברהם — 1 policy, expiring in 3 days (urgent), 1 handled
+  {
+    id: "pol6",
+    customer_id: "c4",
+    type: "travel",
+    policy_number: "POL-TRV-33333",
+    insurance_company: "ביטוח ישיר",
+    discount_percent: 25,
+    discount_expiry: daysFromNow(3),
+    is_active: true,
+  },
+  {
+    id: "pol7",
+    customer_id: "c4",
+    type: "car",
+    policy_number: "POL-CAR-55555",
+    insurance_company: "מגדל ביטוח",
+    discount_percent: 10,
+    discount_expiry: daysFromNow(-10), // already expired
+    is_active: false,
+  },
+];
+
+export function getCustomerPolicies(customerId: string): CustomerPolicy[] {
+  return mockPolicies.filter((p) => p.customer_id === customerId);
+}
+
+function computeRetentionStatus(daysUntilExpiry: number | null): RetentionStatus {
+  if (daysUntilExpiry === null) return "ok";
+  if (daysUntilExpiry <= 7) return "urgent";
+  if (daysUntilExpiry <= 30) return "needs_call";
+  return "ok";
+}
+
+export function getCustomerRetentionInfo(customer: Customer): CustomerRetentionInfo {
+  const policies = getCustomerPolicies(customer.id);
+  const activePolicies = policies.filter((p) => p.is_active);
+
+  let nearestExpiry: string | null = null;
+  let daysUntil: number | null = null;
+
+  for (const p of activePolicies) {
+    const expDate = new Date(p.discount_expiry);
+    const diffDays = Math.ceil((expDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+    if (daysUntil === null || diffDays < daysUntil) {
+      daysUntil = diffDays;
+      nearestExpiry = p.discount_expiry;
+    }
+  }
+
+  return {
+    customer,
+    policies,
+    activePoliciesCount: activePolicies.length,
+    nearestDiscountExpiry: nearestExpiry,
+    daysUntilExpiry: daysUntil,
+    retentionStatus: computeRetentionStatus(daysUntil),
+  };
+}
+
+export function getAllRetentionInfo(): CustomerRetentionInfo[] {
+  return mockCustomers.map(getCustomerRetentionInfo);
+}
+
+export function generateRetentionCallScript(info: CustomerRetentionInfo): string {
+  const expiringPolicies = info.policies.filter((p) => {
+    if (!p.is_active) return false;
+    const diff = Math.ceil((new Date(p.discount_expiry).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+    return diff <= 30;
+  });
+
+  const policyLines = expiringPolicies.map((p) => {
+    const typeLabel = CLAIM_TYPE_LABELS[p.type];
+    const expiryDate = new Date(p.discount_expiry).toLocaleDateString("he-IL");
+    return `  - ${typeLabel} (${p.insurance_company}) — הנחה ${p.discount_percent}% פגה ב-${expiryDate}`;
+  }).join("\n");
+
+  return `שלום ${info.customer.full_name},
+
+שמי [שם הסוכן] מסוכנות ClaimPilot.
+
+אני פונה אליך כי שמתי לב שיש ${expiringPolicies.length === 1 ? "פוליסה אחת" : `${expiringPolicies.length} פוליסות`} שההנחה עליה${expiringPolicies.length === 1 ? "" : "ן"} עומדת לפוג בקרוב:
+
+${policyLines}
+
+רציתי לוודא שאת/ה מודע/ת לזה ולהציע שנבדוק יחד את אפשרויות החידוש — כדי שלא תפסידו את ההנחה.
+
+יש לי כמה מסלולים שיכולים להתאים. מתי נוח לך לשיחה קצרה של כמה דקות?
+
+תודה רבה ויום נעים,
+סוכנות ClaimPilot`;
 }
 
 export function getDashboardStats() {
