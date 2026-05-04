@@ -17,12 +17,16 @@ import {
   Copy,
   Check,
   Percent,
+  Sparkles,
+  Send,
 } from "lucide-react";
 import {
   mockCustomers,
   getCustomerClaims,
   getAllRetentionInfo,
   generateRetentionCallScript,
+  getCustomerInsights,
+  generateCustomerActionMessage,
 } from "@/lib/mock-data";
 import {
   RetentionStatus,
@@ -44,6 +48,7 @@ export default function CustomersPage() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<RetentionStatus | "all">("all");
   const [modalInfo, setModalInfo] = useState<CustomerRetentionInfo | null>(null);
+  const [actionModal, setActionModal] = useState<{ customerId: string; suggestion: string; message: string } | null>(null);
   const [copied, setCopied] = useState(false);
 
   const allRetention = getAllRetentionInfo();
@@ -77,6 +82,12 @@ export default function CustomersPage() {
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  }
+
+  function handleOpenAction(customerId: string) {
+    const result = generateCustomerActionMessage(customerId);
+    setActionModal({ customerId, ...result });
+    setCopied(false);
   }
 
   return (
@@ -151,6 +162,7 @@ export default function CustomersPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filtered.map((info) => {
           const claims = getCustomerClaims(info.customer.id);
+          const insights = getCustomerInsights(info.customer.id);
           return (
             <div
               key={info.customer.id}
@@ -176,6 +188,21 @@ export default function CustomersPage() {
                 </Link>
                 <RetentionBadge status={info.retentionStatus} />
               </div>
+
+              {/* AI Insight Strip */}
+              {insights.length > 0 && (
+                <div className="space-y-1.5 mb-3">
+                  {insights.slice(0, 2).map((insight, i) => (
+                    <div
+                      key={i}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium ${insight.color}`}
+                    >
+                      <span>{insight.icon}</span>
+                      <span>{insight.text}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* Contact */}
               <div className="space-y-1.5 text-sm text-gray-600 mb-3">
@@ -240,24 +267,35 @@ export default function CustomersPage() {
                 </div>
               )}
 
-              {/* Footer */}
-              <div className="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between">
+              {/* Footer — Action buttons */}
+              <div className="mt-4 pt-3 border-t border-gray-100 flex items-center gap-2 flex-wrap">
                 <span className="text-xs text-gray-500">
                   {claims.length} תביעות
                 </span>
-                {(info.retentionStatus === "urgent" ||
-                  info.retentionStatus === "needs_call") && (
+
+                <div className="flex items-center gap-2 mr-auto">
+                  {(info.retentionStatus === "urgent" ||
+                    info.retentionStatus === "needs_call") && (
+                    <button
+                      onClick={() => {
+                        setModalInfo(info);
+                        setCopied(false);
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      <PhoneCall className="w-3.5 h-3.5" />
+                      שיחת שימור
+                    </button>
+                  )}
+
                   <button
-                    onClick={() => {
-                      setModalInfo(info);
-                      setCopied(false);
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                    onClick={() => handleOpenAction(info.customer.id)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-100 text-purple-700 text-xs font-medium rounded-lg hover:bg-purple-200 transition-colors"
                   >
-                    <PhoneCall className="w-3.5 h-3.5" />
-                    הכן שיחת שימור
+                    <Sparkles className="w-3.5 h-3.5" />
+                    פעולה מומלצת
                   </button>
-                )}
+                </div>
               </div>
             </div>
           );
@@ -274,7 +312,6 @@ export default function CustomersPage() {
       {modalInfo && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 max-h-[85vh] flex flex-col">
-            {/* Modal Header */}
             <div className="flex items-center justify-between p-5 border-b border-gray-200">
               <div>
                 <h2 className="text-lg font-bold text-gray-900">
@@ -291,15 +328,11 @@ export default function CustomersPage() {
                 <X className="w-5 h-5 text-gray-500" />
               </button>
             </div>
-
-            {/* Modal Body */}
             <div className="p-5 overflow-y-auto flex-1">
               <pre className="whitespace-pre-wrap text-sm leading-relaxed text-gray-800 font-sans">
                 {generateRetentionCallScript(modalInfo)}
               </pre>
             </div>
-
-            {/* Modal Footer */}
             <div className="p-4 border-t border-gray-200 flex justify-end gap-3">
               <button
                 onClick={() => setModalInfo(null)}
@@ -308,9 +341,7 @@ export default function CustomersPage() {
                 סגור
               </button>
               <button
-                onClick={() =>
-                  handleCopy(generateRetentionCallScript(modalInfo))
-                }
+                onClick={() => handleCopy(generateRetentionCallScript(modalInfo))}
                 className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
               >
                 {copied ? (
@@ -322,6 +353,66 @@ export default function CustomersPage() {
                   <>
                     <Copy className="w-4 h-4" />
                     העתק תסריט
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Recommended Action Modal */}
+      {actionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between p-5 border-b border-gray-200">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-purple-500" />
+                  פעולה מומלצת
+                </h2>
+                <p className="text-sm text-gray-500 mt-0.5">{actionModal.suggestion}</p>
+              </div>
+              <button
+                onClick={() => setActionModal(null)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+
+            <div className="p-5 flex-1 overflow-y-auto">
+              <p className="text-xs text-gray-500 mb-2 font-medium">הודעה מוכנה לשליחה:</p>
+              <div className="bg-green-50 rounded-xl p-4 border border-green-200">
+                <pre className="whitespace-pre-wrap text-sm leading-relaxed text-gray-800 font-sans">
+                  {actionModal.message}
+                </pre>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-gray-200 flex justify-between gap-3">
+              <a
+                href={`https://wa.me/972${mockCustomers.find((c) => c.id === actionModal.customerId)?.phone.replace(/^0/, "").replace(/-/g, "")}?text=${encodeURIComponent(actionModal.message)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
+              >
+                <Send className="w-4 h-4" />
+                שלח ב-WhatsApp
+              </a>
+              <button
+                onClick={() => handleCopy(actionModal.message)}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                {copied ? (
+                  <>
+                    <Check className="w-4 h-4" />
+                    הועתק!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4" />
+                    העתק
                   </>
                 )}
               </button>

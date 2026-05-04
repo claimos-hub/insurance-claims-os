@@ -968,3 +968,420 @@ export function getOpportunityActions(): ActionItem[] {
 
   return items;
 }
+
+// === AI Recommendations & Insights ===
+
+export interface AIRecommendation {
+  text: string;
+  reason: string;
+}
+
+export interface CustomerInsight {
+  type: "risk" | "opportunity" | "expiring" | "info";
+  icon: string;
+  text: string;
+  color: string;
+}
+
+export interface DailyBriefData {
+  greeting: string;
+  riskCustomers: number;
+  stuckClaims: number;
+  expiringToday: number;
+  expiringWeek: number;
+  openConversations: number;
+  topActions: { text: string; href: string }[];
+}
+
+// Generate AI recommendation per action item
+export function getActionRecommendation(item: ActionItem): AIRecommendation {
+  if (item.id.startsWith("stuck-")) {
+    const days = item.issue.match(/(\d+) ימים/)?.[1] || "3";
+    return {
+      text: `שלח תזכורת — תביעה תקועה ${days} ימים`,
+      reason: `תביעה לא עודכנה ${days} ימים. מומלץ ליצור קשר עם הלקוח או חברת הביטוח.`,
+    };
+  }
+  if (item.id.startsWith("expiring-")) {
+    const days = item.issue.match(/(\d+) ימים/)?.[1] || "7";
+    return {
+      text: `התקשר ללקוח — פוליסה פגה בעוד ${days} ימים`,
+      reason: `פוליסה עומדת לפוג. שיחה מהירה יכולה לשמר את הלקוח ולמנוע אובדן כיסוי.`,
+    };
+  }
+  if (item.id.startsWith("discount-")) {
+    return {
+      text: `הצע חידוש לפני שההנחה נגמרת`,
+      reason: `הנחה עומדת לפוג. חידוש עכשיו חוסך ללקוח כסף ומשמר אותו.`,
+    };
+  }
+  if (item.id.startsWith("followup-")) {
+    return {
+      text: `בקש מסמכים חסרים מהלקוח`,
+      reason: `תביעה פתוחה דורשת מסמכים להמשך טיפול.`,
+    };
+  }
+  if (item.id.startsWith("waiting-")) {
+    return {
+      text: `שלח מעקב לחברת הביטוח`,
+      reason: `ממתין לתגובה מחברת הביטוח. מומלץ לשלוח תזכורת.`,
+    };
+  }
+  if (item.id.startsWith("inactive-")) {
+    return {
+      text: `צור קשר — לקוח לא פעיל`,
+      reason: `לא היה קשר עם הלקוח זמן רב. שיחה קצרה משמרת את הקשר.`,
+    };
+  }
+  if (item.id.startsWith("upsell-")) {
+    return {
+      text: `הצע ביטוח נוסף ללקוח`,
+      reason: `ללקוח יש רק סוג אחד של ביטוח — הזדמנות מצוינת להרחבת כיסוי.`,
+    };
+  }
+  return { text: `טפל בפריט`, reason: `פריט דורש טיפול.` };
+}
+
+// Generate WhatsApp message for action item
+export function generateActionMessage(item: ActionItem): string {
+  const customer = mockCustomers.find((c) => c.id === item.customerId);
+  const name = customer?.full_name || "לקוח/ה יקר/ה";
+
+  if (item.id.startsWith("stuck-")) {
+    const claim = item.claimId ? mockClaims.find((c) => c.id === item.claimId) : null;
+    return `שלום ${name}! 👋\nרציתי לעדכן אותך שאני ממשיך לטפל בתביעה${claim ? ` ${claim.claim_number}` : ""} שלך.\nיש משהו שאתה צריך ממני כדי לקדם את העניין?`;
+  }
+  if (item.id.startsWith("expiring-") || item.id.startsWith("discount-")) {
+    return `שלום ${name}! 👋\nשמתי לב שפוליסת הביטוח שלך עומדת להסתיים בקרוב.\nכדאי שנבדוק יחד אפשרויות חידוש — כדי שלא תיהיה בלי כיסוי.\nמתי נוח לך לשיחה קצרה?`;
+  }
+  if (item.id.startsWith("followup-")) {
+    const claim = item.claimId ? mockClaims.find((c) => c.id === item.claimId) : null;
+    const missing = claim ? getClaimMissingDocs(claim.id).filter((d) => !d.is_received) : [];
+    if (missing.length > 0) {
+      return `שלום ${name}! 👋\nכדי להתקדם עם התביעה שלך, אני צריך ממך:\n${missing.map((d) => `📄 ${d.name}`).join("\n")}\n\nאפשר לשלוח בוואטסאפ או במייל. תודה! 🙏`;
+    }
+    return `שלום ${name}! 👋\nרציתי לבדוק אם יש התקדמות בנושא התביעה שלך.\nאני כאן לכל שאלה!`;
+  }
+  if (item.id.startsWith("waiting-")) {
+    const claim = item.claimId ? mockClaims.find((c) => c.id === item.claimId) : null;
+    return `שלום ${name}! 👋\nרציתי לעדכן שאני עוקב אחרי התביעה${claim ? ` ${claim.claim_number}` : ""} שלך מול חברת הביטוח.\nברגע שיהיה עדכון — אעביר אליך מיד!`;
+  }
+  if (item.id.startsWith("inactive-")) {
+    return `שלום ${name}! 👋\nלא שמענו ממך זמן מה ורציתי לבדוק שהכל בסדר.\nאם יש משהו שאני יכול לעזור בו — אני כאן!`;
+  }
+  if (item.id.startsWith("upsell-")) {
+    return `שלום ${name}! 👋\nראיתי שיש לך כרגע סוג אחד של ביטוח.\nרצית שאבדוק לך הצעות לכיסוי נוסף (דירה, בריאות, חיים)? יכול לחסוך לך כסף בחבילה משולבת!`;
+  }
+  return `שלום ${name}! 👋\nרציתי ליצור קשר בנוגע לביטוח שלך. מתי נוח לך לשיחה?`;
+}
+
+// AI insights per customer
+export function getCustomerInsights(customerId: string): CustomerInsight[] {
+  const customer = mockCustomers.find((c) => c.id === customerId);
+  if (!customer) return [];
+
+  const insights: CustomerInsight[] = [];
+  const policies = mockPolicies.filter((p) => p.customer_id === customerId);
+  const claims = mockClaims.filter((c) => c.customer_id === customerId);
+  const activePolicies = policies.filter((p) => p.status !== "expired");
+  const now = new Date();
+
+  // Risk: no activity 30+ days
+  const lastActivity = claims.length > 0
+    ? Math.max(...claims.map((c) => new Date(c.updated_at).getTime()))
+    : new Date(customer.created_at).getTime();
+  const daysSinceActivity = Math.floor((now.getTime() - lastActivity) / (1000 * 60 * 60 * 24));
+  if (daysSinceActivity >= 30) {
+    insights.push({
+      type: "risk",
+      icon: "⚠️",
+      text: `לקוח בסיכון — אין פעילות ${daysSinceActivity} יום`,
+      color: "bg-red-50 text-red-700 border-red-200",
+    });
+  }
+
+  // Expiring policy
+  for (const p of activePolicies) {
+    const dEnd = diffDays(p.end_date);
+    if (dEnd >= 0 && dEnd <= 7) {
+      const typeLabel = CLAIM_TYPE_LABELS[p.insurance_type as ClaimType] || p.insurance_type;
+      insights.push({
+        type: "expiring",
+        icon: "📅",
+        text: `פוליסת ${typeLabel} פגה בעוד ${dEnd} ימים`,
+        color: "bg-amber-50 text-amber-700 border-amber-200",
+      });
+    } else if (dEnd > 7 && dEnd <= 30) {
+      const typeLabel = CLAIM_TYPE_LABELS[p.insurance_type as ClaimType] || p.insurance_type;
+      insights.push({
+        type: "expiring",
+        icon: "📅",
+        text: `פוליסת ${typeLabel} נגמרת בקרוב (${dEnd} ימים)`,
+        color: "bg-yellow-50 text-yellow-700 border-yellow-200",
+      });
+    }
+  }
+
+  // Upsell: only one type of insurance
+  const types = new Set(activePolicies.map((p) => p.insurance_type));
+  if (activePolicies.length > 0 && types.size === 1) {
+    const currentType = CLAIM_TYPE_LABELS[activePolicies[0].insurance_type as ClaimType] || activePolicies[0].insurance_type;
+    insights.push({
+      type: "opportunity",
+      icon: "💰",
+      text: `הזדמנות — ללקוח יש רק ${currentType}`,
+      color: "bg-green-50 text-green-700 border-green-200",
+    });
+  }
+
+  // Stuck claims
+  for (const claim of claims) {
+    if (claim.status === "closed" || claim.status === "approved") continue;
+    const updated = new Date(claim.updated_at);
+    const daysSince = Math.floor((now.getTime() - updated.getTime()) / (1000 * 60 * 60 * 24));
+    if (daysSince >= 3) {
+      insights.push({
+        type: "risk",
+        icon: "⏳",
+        text: `תביעה ${claim.claim_number} תקועה ${daysSince} ימים`,
+        color: "bg-orange-50 text-orange-700 border-orange-200",
+      });
+    }
+  }
+
+  // Missing docs
+  for (const claim of claims) {
+    if (claim.status === "closed") continue;
+    const missing = getClaimMissingDocs(claim.id).filter((d) => !d.is_received);
+    if (missing.length > 0) {
+      insights.push({
+        type: "info",
+        icon: "📄",
+        text: `חסרים ${missing.length} מסמכים לתביעה ${claim.claim_number}`,
+        color: "bg-blue-50 text-blue-700 border-blue-200",
+      });
+    }
+  }
+
+  return insights;
+}
+
+// Generate recommended action message for a customer
+export function generateCustomerActionMessage(customerId: string): { suggestion: string; message: string } {
+  const insights = getCustomerInsights(customerId);
+  const customer = mockCustomers.find((c) => c.id === customerId);
+  const name = customer?.full_name || "לקוח";
+
+  if (insights.length === 0) {
+    return {
+      suggestion: "הכל תקין — אפשר ליצור קשר לבדיקת שביעות רצון",
+      message: `שלום ${name}! 👋\nרציתי לבדוק שהכל בסדר מבחינת הביטוח שלך.\nיש משהו שאני יכול לעזור בו?`,
+    };
+  }
+
+  const top = insights[0];
+  if (top.type === "risk" && top.text.includes("אין פעילות")) {
+    return {
+      suggestion: `${top.icon} ${top.text} — מומלץ ליצור קשר`,
+      message: `שלום ${name}! 👋\nלא שמענו ממך זמן מה.\nרציתי לבדוק שהכל בסדר ושהביטוח שלך מכסה את מה שצריך.\nמתי נוח לך לשיחה קצרה?`,
+    };
+  }
+  if (top.type === "expiring") {
+    return {
+      suggestion: `${top.icon} ${top.text} — הצע חידוש`,
+      message: `שלום ${name}! 👋\n${top.text}.\nכדאי שנבדוק יחד חידוש כדי שלא תהיה בלי כיסוי.\nמתי נוח לך?`,
+    };
+  }
+  if (top.type === "opportunity") {
+    return {
+      suggestion: `${top.icon} ${top.text} — הצע הרחבת כיסוי`,
+      message: `שלום ${name}! 👋\nראיתי שיש לך כרגע סוג אחד של ביטוח.\nאשמח לבדוק לך הצעות לכיסוי נוסף שיכולות לחסוך בחבילה משולבת.\nמעניין אותך?`,
+    };
+  }
+  if (top.text.includes("תקועה")) {
+    return {
+      suggestion: `${top.icon} ${top.text} — דחוף לטפל`,
+      message: `שלום ${name}! 👋\nרציתי לעדכן שאני ממשיך לטפל בתביעה שלך.\nיש עדכון חדש?`,
+    };
+  }
+  if (top.text.includes("מסמכים")) {
+    return {
+      suggestion: `${top.icon} ${top.text} — בקש מהלקוח`,
+      message: `שלום ${name}! 👋\nכדי שנוכל להתקדם עם התביעה, אני צריך ממך כמה מסמכים.\nתוכל/י לשלוח בוואטסאפ?`,
+    };
+  }
+  return {
+    suggestion: `${top.icon} ${top.text}`,
+    message: `שלום ${name}! 👋\nרציתי ליצור קשר. מתי נוח לך?`,
+  };
+}
+
+// Conversation AI summary
+export function getConversationSummary(conv: {
+  customerName: string;
+  messages: { direction: string; message: string }[];
+  tags: string[];
+  linkedClaimNumber?: string;
+  status: string;
+}): string {
+  const msgCount = conv.messages.length;
+  const inbound = conv.messages.filter((m) => m.direction === "inbound").length;
+  const lastInbound = [...conv.messages].reverse().find((m) => m.direction === "inbound");
+
+  const parts: string[] = [];
+
+  if (conv.tags.includes("claim") && conv.linkedClaimNumber) {
+    parts.push(`שיחת תביעה (${conv.linkedClaimNumber})`);
+  } else if (conv.tags.includes("retention")) {
+    parts.push("שיחת שימור");
+  } else if (conv.tags.includes("sales")) {
+    parts.push("פניית מכירה");
+  } else {
+    parts.push("שיחה כללית");
+  }
+
+  parts.push(`${msgCount} הודעות (${inbound} מהלקוח)`);
+
+  if (lastInbound) {
+    const short = lastInbound.message.length > 50
+      ? lastInbound.message.slice(0, 50) + "..."
+      : lastInbound.message;
+    parts.push(`אחרון: "${short}"`);
+  }
+
+  return parts.join(" · ");
+}
+
+// Conversation insights
+export function getConversationInsights(conv: {
+  customerId: string;
+  linkedClaimId?: string;
+  linkedPolicyId?: string;
+  tags: string[];
+}): { icon: string; text: string; type: string }[] {
+  const insights: { icon: string; text: string; type: string }[] = [];
+
+  // Missing docs for linked claim
+  if (conv.linkedClaimId) {
+    const missing = getClaimMissingDocs(conv.linkedClaimId).filter((d) => !d.is_received);
+    if (missing.length > 0) {
+      insights.push({
+        icon: "📄",
+        text: `חסרים ${missing.length} מסמכים: ${missing.map((d) => d.name).join(", ")}`,
+        type: "missing_docs",
+      });
+    }
+  }
+
+  // Expiring policy
+  const policies = mockPolicies.filter((p) => p.customer_id === conv.customerId);
+  for (const p of policies) {
+    if (p.status === "expired") continue;
+    const dEnd = diffDays(p.end_date);
+    if (dEnd >= 0 && dEnd <= 14) {
+      const typeLabel = CLAIM_TYPE_LABELS[p.insurance_type as ClaimType] || p.insurance_type;
+      insights.push({
+        icon: "📅",
+        text: `פוליסת ${typeLabel} פגה בעוד ${dEnd} ימים`,
+        type: "expiring",
+      });
+      break;
+    }
+  }
+
+  // Upsell opportunity
+  const activePolicies = policies.filter((p) => p.status !== "expired");
+  const types = new Set(activePolicies.map((p) => p.insurance_type));
+  if (activePolicies.length > 0 && types.size === 1) {
+    insights.push({
+      icon: "💰",
+      text: "ללקוח סוג אחד של ביטוח — הזדמנות להרחבה",
+      type: "upsell",
+    });
+  }
+
+  // Stuck claim
+  if (conv.linkedClaimId) {
+    const claim = mockClaims.find((c) => c.id === conv.linkedClaimId);
+    if (claim && claim.status !== "closed" && claim.status !== "approved") {
+      const daysSince = Math.floor(
+        (new Date().getTime() - new Date(claim.updated_at).getTime()) / (1000 * 60 * 60 * 24)
+      );
+      if (daysSince >= 3) {
+        insights.push({
+          icon: "⏳",
+          text: `תביעה לא עודכנה ${daysSince} ימים`,
+          type: "stuck",
+        });
+      }
+    }
+  }
+
+  return insights;
+}
+
+// Daily brief data
+export function getDailyBrief(): DailyBriefData {
+  const now = new Date();
+  const hour = now.getHours();
+  const greeting = hour < 12 ? "בוקר טוב" : hour < 18 ? "צהריים טובים" : "ערב טוב";
+
+  // Risk customers (no activity 30+ days)
+  let riskCustomers = 0;
+  for (const c of mockCustomers) {
+    const claims = mockClaims.filter((cl) => cl.customer_id === c.id);
+    const lastActivity = claims.length > 0
+      ? Math.max(...claims.map((cl) => new Date(cl.updated_at).getTime()))
+      : new Date(c.created_at).getTime();
+    if (Math.floor((now.getTime() - lastActivity) / (1000 * 60 * 60 * 24)) >= 30) {
+      riskCustomers++;
+    }
+  }
+
+  // Stuck claims (3+ days no update)
+  let stuckClaims = 0;
+  for (const claim of mockClaims) {
+    if (claim.status === "closed" || claim.status === "approved") continue;
+    const daysSince = Math.floor(
+      (now.getTime() - new Date(claim.updated_at).getTime()) / (1000 * 60 * 60 * 24)
+    );
+    if (daysSince >= 3) stuckClaims++;
+  }
+
+  // Expiring policies
+  let expiringToday = 0;
+  let expiringWeek = 0;
+  for (const p of mockPolicies) {
+    if (p.status === "expired") continue;
+    const dEnd = diffDays(p.end_date);
+    if (dEnd === 0) expiringToday++;
+    if (dEnd >= 0 && dEnd <= 7) expiringWeek++;
+  }
+
+  // Open conversations — import inline to avoid circular dependency
+  let openConvs = 0;
+  try {
+    const convData = require("./conversations-data");
+    const stats = convData.getConversationStats();
+    openConvs = stats.open;
+  } catch {
+    openConvs = 0;
+  }
+
+  // Top actions
+  const urgent = getUrgentActions();
+  const topActions = urgent.slice(0, 3).map((item) => ({
+    text: item.issue,
+    href: item.linkHref,
+  }));
+
+  return {
+    greeting,
+    riskCustomers,
+    stuckClaims,
+    expiringToday,
+    expiringWeek,
+    openConversations: openConvs,
+    topActions,
+  };
+}

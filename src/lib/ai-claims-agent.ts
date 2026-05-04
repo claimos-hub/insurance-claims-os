@@ -128,6 +128,21 @@ const SYSTEM_PROMPT = `אתה עוזר דיגיטלי חכם לסוכן ביטו
 4. ליצור הודעות מוכנות (חידוש פוליסה, סיכום תביעה, בקשת מסמכים)
 5. לתת תובנות פרואקטיביות לסוכן
 
+=== כללי ברזל — כל תשובה חייבת ===
+
+1. לקדם את השיחה קדימה — תמיד תסיים עם שאלה או הנחיה ברורה
+2. אם יש מידע חסר — תשאל עליו מיד
+3. אם יש הזדמנות (שימור / upsell / חידוש) — תזכיר בטבעיות
+4. לעולם אל תגיב רק "הבנתי" או "תודה" — תמיד תוסיף ערך
+
+=== טיפול בתשובות מינימליות ===
+
+אם הלקוח עונה תשובה קצרה/מינימלית ("כן", "לא", "אוקי", "בסדר"):
+- הרחב עם שאלת המשך ספציפית
+- דוגמה: לקוח: "כן" → אתה: "מעולה 👍 רק כדי להשלים — באיזה שעה בערך קרה האירוע?"
+- דוגמה: לקוח: "לא" → אתה: "הבנתי. יש משהו אחר שאני יכול לעזור בו? 🙌"
+- לעולם אל תגיב בתשובה שקצרה מתשובת הלקוח
+
 === התנהגות ===
 
 - עברית טבעית, סגנון WhatsApp — קצר, חם, אנושי
@@ -372,7 +387,14 @@ const EMPTY_REPLIES = [
   "קיבלתי", "נהדר", "מעולה", "שלום", "היי", "הי", "okay", "sure",
   "got it", "thanks", "noted", "ברור", "יופי", "אחלה", "קול",
 ];
-const FALLBACK_REPLY = "הבנתי אותך 👍\nכדי להתקדם — תוכל לחדד קצת יותר?";
+const FALLBACK_REPLIES = [
+  "הבנתי אותך 👍\nכדי להתקדם — תוכל לפרט קצת יותר?",
+  "מעולה! רק כדי שאוכל לעזור הכי טוב — מה בדיוק קרה?",
+  "בסדר גמור 👍\nספר לי עוד קצת כדי שנוכל להתקדם",
+];
+function getFallbackReply(): string {
+  return FALLBACK_REPLIES[Math.floor(Math.random() * FALLBACK_REPLIES.length)];
+}
 const MIN_REPLY_LENGTH = 8;
 const SHORT_REPLY_THRESHOLD = 20;
 
@@ -383,7 +405,7 @@ function postProcessReply(reply: string, missingFields: string[], conversationHi
   // Block empty acknowledgements and too-short replies
   if (EMPTY_REPLIES.includes(normalized) || trimmed.length < MIN_REPLY_LENGTH) {
     console.log("[ai-agent] Blocked empty/short reply:", JSON.stringify(trimmed));
-    return FALLBACK_REPLY;
+    return getFallbackReply();
   }
 
   // Block repetitive replies — if the AI repeats the last outbound message
@@ -406,7 +428,7 @@ function postProcessReply(reply: string, missingFields: string[], conversationHi
           const nextField = missingFields.find((f) => fieldHints[f]);
           if (nextField) return fieldHints[nextField];
         }
-        return FALLBACK_REPLY;
+        return getFallbackReply();
       }
     }
   }
