@@ -1,4 +1,4 @@
-import { Claim, Customer, ClaimDocument, MissingDocument, ClaimNote, ActivityEvent, CLAIM_TYPE_LABELS, CLAIM_STATUS_LABELS, CustomerPolicy, EnrichedPolicy, CustomerRetentionInfo, RetentionStatus } from "@/types";
+import { Claim, Customer, ClaimDocument, MissingDocument, ClaimNote, ActivityEvent, ClaimType, CLAIM_TYPE_LABELS, CLAIM_STATUS_LABELS, CustomerPolicy, EnrichedPolicy, CustomerRetentionInfo, RetentionStatus } from "@/types";
 
 export const mockCustomers: Customer[] = [
   {
@@ -774,4 +774,197 @@ export function getDashboardStats() {
   const approvedAmount = mockClaims.reduce((sum, c) => sum + (c.approved_amount || 0), 0);
 
   return { total, byStatus, totalAmount, approvedAmount };
+}
+
+// --- Actions Page Data ---
+
+export type ActionPriority = "red" | "orange" | "green";
+export type ActionCTA = "open_claim" | "open_whatsapp" | "call" | "open_customer";
+
+export interface ActionItem {
+  id: string;
+  customerName: string;
+  customerPhone: string;
+  customerId: string;
+  issue: string;
+  priority: ActionPriority;
+  cta: ActionCTA;
+  ctaLabel: string;
+  linkHref: string;
+  claimId?: string;
+  policyId?: string;
+}
+
+export function getUrgentActions(): ActionItem[] {
+  const items: ActionItem[] = [];
+  const now = new Date();
+
+  // 1. Claims stuck — no update in 3+ days
+  for (const claim of mockClaims) {
+    if (claim.status === "closed" || claim.status === "approved") continue;
+    const updated = new Date(claim.updated_at);
+    const daysSince = Math.floor((now.getTime() - updated.getTime()) / (1000 * 60 * 60 * 24));
+    if (daysSince >= 3) {
+      const customer = mockCustomers.find((c) => c.id === claim.customer_id);
+      items.push({
+        id: `stuck-${claim.id}`,
+        customerName: customer?.full_name || "לקוח",
+        customerPhone: customer?.phone || "",
+        customerId: claim.customer_id,
+        issue: `תביעה ${claim.claim_number} תקועה ${daysSince} ימים ללא עדכון`,
+        priority: daysSince >= 7 ? "red" : "orange",
+        cta: "open_claim",
+        ctaLabel: "פתח תביעה",
+        linkHref: `/claims/${claim.id}`,
+        claimId: claim.id,
+      });
+    }
+  }
+
+  // 2. Expiring policies (≤7 days)
+  for (const policy of mockPolicies) {
+    if (policy.status === "expired") continue;
+    const dEnd = diffDays(policy.end_date);
+    if (dEnd >= 0 && dEnd <= 7) {
+      const customer = mockCustomers.find((c) => c.id === policy.customer_id);
+      const typeLabel = CLAIM_TYPE_LABELS[policy.insurance_type as ClaimType] || policy.insurance_type;
+      items.push({
+        id: `expiring-${policy.id}`,
+        customerName: customer?.full_name || "לקוח",
+        customerPhone: customer?.phone || "",
+        customerId: policy.customer_id,
+        issue: `פוליסת ${typeLabel} (${policy.provider}) פגה בעוד ${dEnd} ימים`,
+        priority: dEnd <= 3 ? "red" : "orange",
+        cta: "call",
+        ctaLabel: "התקשר",
+        linkHref: `/customers/${policy.customer_id}`,
+        policyId: policy.id,
+      });
+    }
+  }
+
+  // 3. Expiring discounts (≤14 days)
+  for (const policy of mockPolicies) {
+    if (policy.status === "expired" || !policy.discount_end_date) continue;
+    const dDiscount = diffDays(policy.discount_end_date);
+    if (dDiscount >= 0 && dDiscount <= 14) {
+      // Skip if already in expiring policies list (same policy)
+      if (items.some((i) => i.policyId === policy.id)) continue;
+      const customer = mockCustomers.find((c) => c.id === policy.customer_id);
+      const typeLabel = CLAIM_TYPE_LABELS[policy.insurance_type as ClaimType] || policy.insurance_type;
+      items.push({
+        id: `discount-${policy.id}`,
+        customerName: customer?.full_name || "לקוח",
+        customerPhone: customer?.phone || "",
+        customerId: policy.customer_id,
+        issue: `הנחה על ${typeLabel} פגה בעוד ${dDiscount} ימים`,
+        priority: dDiscount <= 5 ? "orange" : "green",
+        cta: "call",
+        ctaLabel: "התקשר",
+        linkHref: `/customers/${policy.customer_id}`,
+        policyId: policy.id,
+      });
+    }
+  }
+
+  return items.sort((a, b) => {
+    const order: Record<ActionPriority, number> = { red: 0, orange: 1, green: 2 };
+    return order[a.priority] - order[b.priority];
+  });
+}
+
+export function getFollowUpActions(): ActionItem[] {
+  const items: ActionItem[] = [];
+
+  // Open claims not completed (new, waiting_customer_docs)
+  for (const claim of mockClaims) {
+    if (claim.status !== "new" && claim.status !== "waiting_customer_docs") continue;
+    const customer = mockCustomers.find((c) => c.id === claim.customer_id);
+    const statusLabel = CLAIM_STATUS_LABELS[claim.status];
+    items.push({
+      id: `followup-${claim.id}`,
+      customerName: customer?.full_name || "לקוח",
+      customerPhone: customer?.phone || "",
+      customerId: claim.customer_id,
+      issue: `תביעה ${claim.claim_number} — ${statusLabel}`,
+      priority: claim.status === "new" ? "orange" : "red",
+      cta: "open_claim",
+      ctaLabel: "פתח תביעה",
+      linkHref: `/claims/${claim.id}`,
+      claimId: claim.id,
+    });
+  }
+
+  // Claims waiting for insurance response
+  for (const claim of mockClaims) {
+    if (claim.status !== "waiting_insurance" && claim.status !== "in_review") continue;
+    const customer = mockCustomers.find((c) => c.id === claim.customer_id);
+    items.push({
+      id: `waiting-${claim.id}`,
+      customerName: customer?.full_name || "לקוח",
+      customerPhone: customer?.phone || "",
+      customerId: claim.customer_id,
+      issue: `תביעה ${claim.claim_number} — ממתין לתגובת חברת ביטוח`,
+      priority: "orange",
+      cta: "open_claim",
+      ctaLabel: "פתח תביעה",
+      linkHref: `/claims/${claim.id}`,
+      claimId: claim.id,
+    });
+  }
+
+  return items.sort((a, b) => {
+    const order: Record<ActionPriority, number> = { red: 0, orange: 1, green: 2 };
+    return order[a.priority] - order[b.priority];
+  });
+}
+
+export function getOpportunityActions(): ActionItem[] {
+  const items: ActionItem[] = [];
+  const now = new Date();
+
+  // Customers without recent interaction (no claim updated in 30+ days)
+  for (const customer of mockCustomers) {
+    const customerClaims = mockClaims.filter((c) => c.customer_id === customer.id);
+    const lastUpdate = customerClaims.length > 0
+      ? Math.max(...customerClaims.map((c) => new Date(c.updated_at).getTime()))
+      : new Date(customer.created_at).getTime();
+    const daysSince = Math.floor((now.getTime() - lastUpdate) / (1000 * 60 * 60 * 24));
+
+    if (daysSince >= 30) {
+      items.push({
+        id: `inactive-${customer.id}`,
+        customerName: customer.full_name,
+        customerPhone: customer.phone,
+        customerId: customer.id,
+        issue: `לא היה קשר ${daysSince} ימים — כדאי ליצור קשר`,
+        priority: "green",
+        cta: "call",
+        ctaLabel: "התקשר",
+        linkHref: `/customers/${customer.id}`,
+      });
+    }
+  }
+
+  // Upsell: customers with only 1 policy type
+  for (const customer of mockCustomers) {
+    const policies = mockPolicies.filter((p) => p.customer_id === customer.id && p.status !== "expired");
+    const types = new Set(policies.map((p) => p.insurance_type));
+    if (policies.length > 0 && types.size === 1) {
+      const currentType = CLAIM_TYPE_LABELS[policies[0].insurance_type as ClaimType] || policies[0].insurance_type;
+      items.push({
+        id: `upsell-${customer.id}`,
+        customerName: customer.full_name,
+        customerPhone: customer.phone,
+        customerId: customer.id,
+        issue: `יש רק ${currentType} — הזדמנות להרחבת כיסוי`,
+        priority: "green",
+        cta: "call",
+        ctaLabel: "התקשר",
+        linkHref: `/customers/${customer.id}`,
+      });
+    }
+  }
+
+  return items;
 }

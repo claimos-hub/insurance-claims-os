@@ -1,10 +1,33 @@
-// AI-Powered Claims Intake Agent
-// Uses Claude API to intelligently manage insurance claim intake conversations
+// AI-Powered Claims & Retention Assistant
+// Full context-aware agent: claim intake, retention alerts, message generation, proactive insights
 // Falls back to rule-based automation-engine if AI is unavailable
 
 import Anthropic from "@anthropic-ai/sdk";
 
 // ---- Types ----
+
+export interface CustomerPolicyContext {
+  insurance_type: string;
+  provider: string;
+  policy_number: string;
+  end_date: string;
+  days_until_end: number;
+  discount_end_date: string | null;
+  days_until_discount_end: number | null;
+  status: string;
+}
+
+export interface CustomerClaimContext {
+  claim_number: string;
+  claim_type: string;
+  status: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+  days_since_update: number;
+  missing_documents: string[];
+  readiness_score: number;
+}
 
 export interface AIAgentInput {
   phone: string;
@@ -21,6 +44,14 @@ export interface AIAgentInput {
     collected_data: Record<string, unknown>;
   } | null;
   conversationHistory: { direction: "inbound" | "outbound"; message: string }[];
+  // New: full customer context
+  policies: CustomerPolicyContext[];
+  claims: CustomerClaimContext[];
+}
+
+export interface AIInsight {
+  type: "risk" | "expiring_policy" | "incomplete_claim" | "upsell" | "follow_up";
+  message: string;
 }
 
 export interface AIAgentOutput {
@@ -28,6 +59,7 @@ export interface AIAgentOutput {
   updatedData: Record<string, unknown>;
   readyForClaim: boolean;
   missingFields: string[];
+  insights: AIInsight[];
 }
 
 // ---- Required documents by claim type ----
@@ -81,136 +113,169 @@ const ALL_FIELDS = [
   "third_party_details",
 ];
 
-// ---- System prompt (constant, enforced on every request) ----
+// ---- System prompt ----
 
-const SYSTEM_PROMPT = `אתה סוכן תביעות ביטוח דיגיטלי מקצועי בשם ClaimPilot.
-תפקידך לנהל שיחת קליטת תביעה מלאה כמו סוכן ביטוח אנושי — לא כמו טופס.
+const SYSTEM_PROMPT = `אתה עוזר דיגיטלי חכם לסוכן ביטוח, בשם ClaimPilot.
+אתה לא רק קולט תביעות — אתה עוזר מלא: קליטת תביעות, שימור לקוחות, מעקב, ויצירת הודעות.
 
-=== התנהגות ליבה ===
+=== מי אתה ===
 
-1. דבר בעברית טבעית (סגנון WhatsApp)
-2. היה אנושי, קצר, ברור ומקצועי
-3. לעולם אל תישמע רובוטי או חזרתי
-4. תמיד הכר במה שהמשתמש אמר
-5. שאל רק שאלה אחת בכל פעם
-6. לעולם אל תשאל על מידע שכבר קיים
+אתה מדבר עם לקוחות בוואטסאפ בשם הסוכן.
+תפקידך:
+1. לקלוט תביעות חדשות ולאסוף מידע
+2. לזהות לקוחות בסיכון (פוליסה עומדת לפוג, הנחה שנגמרת)
+3. לדחוף תביעות תקועות קדימה
+4. ליצור הודעות מוכנות (חידוש פוליסה, סיכום תביעה, בקשת מסמכים)
+5. לתת תובנות פרואקטיביות לסוכן
 
-=== זיכרון ונתונים ===
+=== התנהגות ===
 
-אתה מקבל collected_data (JSON עם שדות ידועים) והיסטוריית שיחה.
-כללים:
-- אם מידע קיים → אל תשאל שוב
-- הכר במידע קיים: "ראיתי שכבר ציינת שזה קרה בתל אביב"
-- שאל רק על שדות חסרים
+- עברית טבעית, סגנון WhatsApp — קצר, חם, אנושי
+- מקסימום 2-3 משפטים בתשובה
+- לעולם לא חזרתי, לא רובוטי
+- שאלה אחת בכל פעם
+- אל תשאל על מידע שכבר יש לך
+- אל תאמר "אני AI" או "אני בוט"
+- אימוג'י בעדינות: 👍 🙌 📄 📸
 
-=== שדות נדרשים ===
+=== קליטת תביעה ===
 
-- full_name: שם מלא
-- phone: טלפון
-- claim_type: סוג תביעה (זהה אוטומטית: car/health/property/travel/life/other)
-- event_date: תאריך האירוע
-- event_location: מיקום האירוע
-- description: תיאור מה קרה
-- injuries: פציעות (אם יש)
-- third_party_details: פרטי צד שלישי (אם רלוונטי)
+אם הלקוח פונה בנושא תביעה חדשה:
+1. זהה את סוג התביעה אוטומטית מהתיאור
+2. הגב באמפתיה קצרה, ואז שאל מה חסר
+3. סדר: מה קרה → איפה → מתי → פרטים → מסמכים
+4. כשהכל מוכן — סכם ושאל "רוצה שאפתח תביעה?"
 
-=== זרימת שיחה ===
+שדות נדרשים:
+- full_name, phone, claim_type (car/health/property/travel/life/other)
+- event_date, event_location, description
+- injuries (אם רלוונטי), third_party_details (אם רלוונטי)
 
-שלב 1 — הבן וסווג:
-- זהה סוג תביעה אוטומטית
-- הגב באמפתיה: "מבין אותך, זה נשמע כמו תאונה"
+=== שימור ופוליסות ===
 
-שלב 2 — שאילת שאלות חכמה:
-- שאל רק מה שחסר
-- אם המשתמש שלח מספר פרטים — סכם בקצרה והתקדם
-- דוגמה: "מעולה, הבנתי שזה קרה בתל אביב אתמול בערב 👍 חסר לי רק באיזה שעה בערך זה קרה?"
+אתה מקבל את כל הפוליסות של הלקוח.
+אם פוליסה עומדת לפוג (≤30 ימים):
+- הזכר את זה בטבעיות: "אגב, שמתי לב שביטוח הרכב שלך מסתיים בעוד X ימים"
+- הצע חידוש: "רוצה שאבדוק לך הצעה לחידוש?"
+אם הנחה עומדת לפוג (≤14 ימים):
+- "יש לך הנחה שעומדת להיגמר — כדאי לחדש לפני"
 
-שלב 3 — שליטה בזרימה:
-- אל תקפוץ בין נושאים באקראי
-- שמור על סדר הגיוני: מה קרה → איפה → מתי → פרטים → צדדים → מסמכים
+אם הלקוח שואל על חידוש/פוליסה — צור הודעה מוכנה.
 
-שלב 4 — איסוף מסמכים (קריטי):
-אחרי שנאסף מספיק מידע, חובה לבקש מסמכים.
-דוגמה לתאונת רכב:
-"תוכל לשלוח לי בבקשה:
-📸 תמונות של הרכב
-📄 רישיון רכב
-📄 רישיון נהיגה
-📄 פרטי צד ג׳ (אם יש)
-פשוט תשלח כאן בצ'אט 👍"
+=== תביעות קיימות ===
 
-שלב 5 — מוכנות וסגירה:
-כשכל המידע נאסף:
-1. אמור: "מעולה, יש לי את כל מה שצריך 👍"
-2. הראה סיכום קצר (סוג, מיקום, זמן, תיאור)
-3. שאל: "רוצה שאפתח לך את התביעה עכשיו?"
+אתה מקבל את כל התביעות הקיימות של הלקוח.
+אם יש תביעה תקועה (לא עודכנה 3+ ימים):
+- "ראיתי שתביעה CLM-XXX עדיין ממתינה — רוצה שאעדכן אותך?"
+אם יש מסמכים חסרים:
+- "חסרים עוד כמה מסמכים לתביעה שלך — רוצה שאפרט?"
+אם הלקוח שואל "מה הסטטוס" — תן סיכום קצר של כל התביעות שלו.
 
-שלב 6 — יצירת תביעה:
-אם המשתמש מאשר: "התביעה נפתחה בהצלחה 🙌 מספר תביעה: XXXX"
+=== יצירת הודעות ===
 
-=== כללי סגנון ===
+אם הסוכן (או הלקוח) מבקש ליצור הודעה:
+- "כתוב הודעת חידוש" → צור הודעת WhatsApp קצרה וחמה לחידוש
+- "סכם את התביעה" → סיכום של שורה-שתיים
+- "מה חסר?" → רשימה קצרה של מסמכים/מידע חסר
 
-כן ✔: קצר, ברור, זורם, אנושי
-לא ✖: "OK", חזרות, שאלות כפולות, טון של טופס
+=== תובנות (insights) ===
 
-=== מגבלות תשובה ===
+בכל תשובה, הוסף מערך insights עם התראות רלוונטיות.
+סוגים:
+- risk: "לקוח בסיכון נטישה — X ימים בלי קשר"
+- expiring_policy: "פוליסת רכב פגה בעוד 5 ימים"
+- incomplete_claim: "תביעה CLM-XXX — חסרים 3 מסמכים"
+- upsell: "ללקוח יש רק ביטוח רכב — הזדמנות להציע דירה"
+- follow_up: "תביעה CLM-XXX לא עודכנה 7 ימים"
 
-- מקסימום 2-3 משפטים לתשובה
-- העדף טון שיחתי
-- השתמש באימוג'י בעדינות (👍 🙌 📄 📸 🙏)
-
-=== כלל מפתח ===
-
-אתה לא שואל שאלות — אתה מנהל תביעה.
-כל הודעה חייבת לקדם את התביעה קדימה.
+הוסף insights רק כשהם רלוונטיים ומעשיים. אל תמציא.
 
 === מסמכים נדרשים לפי סוג תביעה ===
 ${JSON.stringify(REQUIRED_DOCUMENTS, null, 2)}
 
 === פורמט תשובה ===
-אתה חייב להחזיר תשובה בפורמט JSON בלבד, ללא טקסט נוסף לפני או אחרי ה-JSON.
 
-מבנה ה-JSON:
+החזר JSON בלבד, ללא טקסט מחוץ ל-JSON:
+
 {
-  "reply": "ההודעה שתשלח ללקוח ב-WhatsApp (קצרה, טבעית, אנושית)",
-  "updatedData": { כל השדות שידועים כרגע — חדשים + ישנים מה-collected_data },
+  "reply": "ההודעה ללקוח — קצרה, טבעית, בעברית",
+  "updatedData": { כל השדות הידועים — חדשים + ישנים },
   "readyForClaim": false,
-  "missingFields": ["רשימת שדות חסרים מתוך השדות הנדרשים"]
+  "missingFields": ["שדות חסרים מהרשימה הנדרשת"],
+  "insights": [
+    { "type": "expiring_policy", "message": "פוליסת רכב פגה בעוד 5 ימים" }
+  ]
 }
 
-כללים ל-readyForClaim:
-- true רק כשיש מספיק מידע: סוג תביעה, תאריך, מיקום, תיאור, והלקוח אישר פתיחת תביעה
-- false בכל מקרה אחר`;
+readyForClaim = true רק כשיש מספיק מידע והלקוח אישר פתיחת תביעה.
+insights = מערך ריק [] אם אין תובנות רלוונטיות.`;
 
-// ---- Build full system prompt with dynamic context ----
+// ---- Build dynamic context block ----
 
-function buildSystemPrompt(
-  existingCustomer: AIAgentInput["existingCustomer"],
-  currentSession: AIAgentInput["currentSession"]
-): string {
-  const customerContext = existingCustomer
-    ? `
-הלקוח מוכר במערכת:
-- שם: ${existingCustomer.full_name || "לא ידוע"}
-- טלפון: ${existingCustomer.phone}
-- אימייל: ${existingCustomer.email || "לא ידוע"}
-אל תשאל שוב פרטים שכבר ידועים.`
-    : "הלקוח חדש במערכת. יש לאסוף את שמו המלא.";
+function buildCustomerContext(input: AIAgentInput): string {
+  const parts: string[] = [];
 
-  const sessionContext =
-    currentSession && Object.keys(currentSession.collected_data).length > 0
-      ? `
-נתונים שכבר נאספו (collected_data):
-${JSON.stringify(currentSession.collected_data, null, 2)}
-אל תשאל שוב על פרטים שכבר נאספו. כלול אותם ב-updatedData.`
-      : "זו תחילת שיחה חדשה.";
+  // Customer identity
+  if (input.existingCustomer) {
+    const c = input.existingCustomer;
+    parts.push(`=== לקוח מוכר ===
+שם: ${c.full_name || "לא ידוע"}
+טלפון: ${c.phone}
+אימייל: ${c.email || "—"}`);
+  } else {
+    parts.push("=== לקוח חדש === \nלא מוכר במערכת. אסוף שם מלא.");
+  }
 
-  return `${SYSTEM_PROMPT}
+  // Session data
+  if (input.currentSession && Object.keys(input.currentSession.collected_data).length > 0) {
+    parts.push(`\n=== נתונים שנאספו ===
+${JSON.stringify(input.currentSession.collected_data, null, 2)}
+אל תשאל שוב על מה שכבר ידוע. כלול הכל ב-updatedData.`);
+  } else {
+    parts.push("\n=== שיחה חדשה ===");
+  }
 
-=== הקשר שיחה נוכחי ===
-${customerContext}
+  // Policies
+  if (input.policies.length > 0) {
+    const policyLines = input.policies.map((p) => {
+      const typeLabels: Record<string, string> = {
+        car: "רכב", health: "בריאות", life: "חיים", property: "רכוש", travel: "נסיעות",
+      };
+      const typeHeb = typeLabels[p.insurance_type] || p.insurance_type;
+      let line = `- ${typeHeb} (${p.provider}) | פוליסה ${p.policy_number} | פג ${p.end_date} (${p.days_until_end} ימים)`;
+      if (p.days_until_discount_end !== null && p.days_until_discount_end >= 0 && p.days_until_discount_end <= 14) {
+        line += ` | ⚠️ הנחה פגה בעוד ${p.days_until_discount_end} ימים`;
+      }
+      if (p.days_until_end <= 7) line += " 🔴";
+      else if (p.days_until_end <= 30) line += " 🟠";
+      return line;
+    });
+    parts.push(`\n=== פוליסות הלקוח ===\n${policyLines.join("\n")}`);
+  } else {
+    parts.push("\n=== פוליסות === אין פוליסות רשומות.");
+  }
 
-${sessionContext}`;
+  // Existing claims
+  if (input.claims.length > 0) {
+    const claimLines = input.claims.map((c) => {
+      const statusLabels: Record<string, string> = {
+        new: "חדשה", waiting_customer_docs: "ממתין למסמכים", waiting_insurance: "ממתין לחב׳ ביטוח",
+        in_review: "בבדיקה", approved: "אושרה", rejected: "נדחתה", closed: "סגורה",
+      };
+      const statusHeb = statusLabels[c.status] || c.status;
+      let line = `- ${c.claim_number} | ${c.claim_type} | ${statusHeb} | עודכן לפני ${c.days_since_update} ימים`;
+      if (c.missing_documents.length > 0) {
+        line += ` | חסרים: ${c.missing_documents.length} מסמכים`;
+      }
+      if (c.days_since_update >= 3 && c.status !== "closed" && c.status !== "approved") {
+        line += " ⚠️ תקועה";
+      }
+      return line;
+    });
+    parts.push(`\n=== תביעות קיימות ===\n${claimLines.join("\n")}`);
+  }
+
+  return parts.join("\n");
 }
 
 // ---- Check if AI is available ----
@@ -247,16 +312,15 @@ export async function processClaimMessage(
   // Add current message
   messages.push({ role: "user", content: input.message });
 
-  const systemPrompt = buildSystemPrompt(
-    input.existingCustomer,
-    input.currentSession
-  );
+  const systemPrompt = `${SYSTEM_PROMPT}\n\n${buildCustomerContext(input)}`;
 
   console.log("[ai-agent] Sending to Claude API:", {
     phone: input.phone,
     messageCount: messages.length,
     hasCustomer: !!input.existingCustomer,
     hasSession: !!input.currentSession,
+    policiesCount: input.policies.length,
+    claimsCount: input.claims.length,
   });
 
   try {
@@ -280,11 +344,15 @@ export async function processClaimMessage(
     const parsed = parseAIResponse(rawText);
 
     // Post-process: enforce reply quality
-    parsed.reply = postProcessReply(parsed.reply, parsed.missingFields);
+    parsed.reply = postProcessReply(parsed.reply, parsed.missingFields, input.conversationHistory);
+
+    // Add rule-based insights the AI might have missed
+    parsed.insights = mergeInsights(parsed.insights, input);
 
     console.log("[ai-agent] Parsed AI response:", {
       readyForClaim: parsed.readyForClaim,
       missingFields: parsed.missingFields.length,
+      insights: parsed.insights.length,
       dataKeys: Object.keys(parsed.updatedData),
     });
 
@@ -299,12 +367,16 @@ export async function processClaimMessage(
 
 // ---- Post-process reply quality ----
 
-const EMPTY_REPLIES = ["ok", "אוקיי", "בסדר", "הבנתי", "טוב", "אוקי"];
+const EMPTY_REPLIES = [
+  "ok", "אוקיי", "בסדר", "הבנתי", "טוב", "אוקי", "תודה", "סבבה",
+  "קיבלתי", "נהדר", "מעולה", "שלום", "היי", "הי", "okay", "sure",
+  "got it", "thanks", "noted", "ברור", "יופי", "אחלה", "קול",
+];
 const FALLBACK_REPLY = "הבנתי אותך 👍\nכדי להתקדם — תוכל לחדד קצת יותר?";
-const MIN_REPLY_LENGTH = 5;
-const SHORT_REPLY_THRESHOLD = 15;
+const MIN_REPLY_LENGTH = 8;
+const SHORT_REPLY_THRESHOLD = 20;
 
-function postProcessReply(reply: string, missingFields: string[]): string {
+function postProcessReply(reply: string, missingFields: string[], conversationHistory?: { direction: "inbound" | "outbound"; message: string }[]): string {
   const trimmed = reply.trim();
   const normalized = trimmed.replace(/[.!?,\s]+/g, "").toLowerCase();
 
@@ -312,6 +384,31 @@ function postProcessReply(reply: string, missingFields: string[]): string {
   if (EMPTY_REPLIES.includes(normalized) || trimmed.length < MIN_REPLY_LENGTH) {
     console.log("[ai-agent] Blocked empty/short reply:", JSON.stringify(trimmed));
     return FALLBACK_REPLY;
+  }
+
+  // Block repetitive replies — if the AI repeats the last outbound message
+  if (conversationHistory && conversationHistory.length > 0) {
+    const lastOutbound = [...conversationHistory]
+      .reverse()
+      .find((m) => m.direction === "outbound");
+    if (lastOutbound) {
+      const lastNorm = lastOutbound.message.replace(/[.!?,\s]+/g, "").toLowerCase();
+      if (normalized === lastNorm || (normalized.length > 10 && lastNorm.includes(normalized))) {
+        console.log("[ai-agent] Blocked repetitive reply");
+        if (missingFields.length > 0) {
+          const fieldHints: Record<string, string> = {
+            claim_type: "איזה סוג ביטוח מדובר?",
+            event_date: "מתי זה קרה?",
+            event_location: "איפה זה קרה?",
+            description: "תוכל לתאר בקצרה מה קרה?",
+            injuries: "היו פציעות?",
+          };
+          const nextField = missingFields.find((f) => fieldHints[f]);
+          if (nextField) return fieldHints[nextField];
+        }
+        return FALLBACK_REPLY;
+      }
+    }
   }
 
   // Enrich short replies by appending a nudge about missing fields
@@ -331,6 +428,60 @@ function postProcessReply(reply: string, missingFields: string[]): string {
   }
 
   return trimmed;
+}
+
+// ---- Merge rule-based insights with AI insights ----
+
+function mergeInsights(aiInsights: AIInsight[], input: AIAgentInput): AIInsight[] {
+  const insights = [...aiInsights];
+  const existingMessages = new Set(insights.map((i) => i.type));
+
+  // Expiring policies the AI might not have flagged
+  for (const p of input.policies) {
+    if (p.days_until_end >= 0 && p.days_until_end <= 7 && !existingMessages.has("expiring_policy")) {
+      const typeLabels: Record<string, string> = {
+        car: "רכב", health: "בריאות", life: "חיים", property: "רכוש", travel: "נסיעות",
+      };
+      insights.push({
+        type: "expiring_policy",
+        message: `פוליסת ${typeLabels[p.insurance_type] || p.insurance_type} (${p.provider}) פגה בעוד ${p.days_until_end} ימים`,
+      });
+      break; // one is enough
+    }
+    if (p.days_until_discount_end !== null && p.days_until_discount_end >= 0 && p.days_until_discount_end <= 7) {
+      if (!insights.some((i) => i.message.includes("הנחה"))) {
+        insights.push({
+          type: "expiring_policy",
+          message: `הנחה על פוליסה עומדת לפוג בעוד ${p.days_until_discount_end} ימים`,
+        });
+        break;
+      }
+    }
+  }
+
+  // Stuck claims
+  for (const c of input.claims) {
+    if (c.days_since_update >= 3 && c.status !== "closed" && c.status !== "approved" && !existingMessages.has("follow_up")) {
+      insights.push({
+        type: "follow_up",
+        message: `תביעה ${c.claim_number} לא עודכנה ${c.days_since_update} ימים`,
+      });
+      break;
+    }
+  }
+
+  // Incomplete claims with missing docs
+  for (const c of input.claims) {
+    if (c.missing_documents.length > 0 && c.status !== "closed" && !existingMessages.has("incomplete_claim")) {
+      insights.push({
+        type: "incomplete_claim",
+        message: `תביעה ${c.claim_number} — חסרים ${c.missing_documents.length} מסמכים`,
+      });
+      break;
+    }
+  }
+
+  return insights;
 }
 
 // ---- Parse and validate AI response ----
@@ -356,7 +507,7 @@ function parseAIResponse(rawText: string): AIAgentOutput {
   // Validate and sanitize
   const reply = typeof parsed.reply === "string" && parsed.reply.length > 0
     ? parsed.reply
-    : "שלום! אני כאן לעזור לך עם תביעת הביטוח. ספר לי מה קרה?";
+    : "שלום! אני כאן לעזור לך. ספר לי במה אוכל לסייע?";
 
   const updatedData =
     typeof parsed.updatedData === "object" && parsed.updatedData !== null
@@ -372,10 +523,32 @@ function parseAIResponse(rawText: string): AIAgentOutput {
     ? (parsed.missingFields as string[]).filter((f) => ALL_FIELDS.includes(f))
     : ALL_FIELDS;
 
+  // Parse insights
+  const insights: AIInsight[] = [];
+  if (Array.isArray(parsed.insights)) {
+    for (const item of parsed.insights) {
+      if (
+        typeof item === "object" && item !== null &&
+        typeof (item as Record<string, unknown>).type === "string" &&
+        typeof (item as Record<string, unknown>).message === "string"
+      ) {
+        const validTypes = ["risk", "expiring_policy", "incomplete_claim", "upsell", "follow_up"];
+        const t = (item as Record<string, unknown>).type as string;
+        if (validTypes.includes(t)) {
+          insights.push({
+            type: t as AIInsight["type"],
+            message: (item as Record<string, unknown>).message as string,
+          });
+        }
+      }
+    }
+  }
+
   return {
     reply,
     updatedData,
     readyForClaim,
     missingFields,
+    insights,
   };
 }

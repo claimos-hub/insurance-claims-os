@@ -16,7 +16,7 @@ export default function LoginPage() {
     setLoading(true);
     // Mock login - will be replaced with Supabase auth
     setTimeout(() => {
-      router.push("/dashboard");
+      router.push("/actions");
     }, 800);
   };
 

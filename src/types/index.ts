@@ -228,3 +228,67 @@ export interface IntakeClaim {
   status: "intake" | "ready_for_review" | "approved_by_agent" | "sent_to_inspector";
   created_at: string;
 }
+
+// --- WhatsApp Inbox Types ---
+
+export type ConversationStatus = "open" | "in_progress" | "closed";
+export type ConversationTag = "claim" | "retention" | "sales" | "general";
+export type ConversationPriority = "high" | "medium" | "low";
+
+export const CONVERSATION_STATUS_LABELS: Record<ConversationStatus, string> = {
+  open: "פתוחה",
+  in_progress: "בטיפול",
+  closed: "סגורה",
+};
+
+export const CONVERSATION_STATUS_COLORS: Record<ConversationStatus, string> = {
+  open: "bg-red-100 text-red-800",
+  in_progress: "bg-blue-100 text-blue-800",
+  closed: "bg-gray-100 text-gray-800",
+};
+
+export const CONVERSATION_TAG_LABELS: Record<ConversationTag, string> = {
+  claim: "תביעה",
+  retention: "שימור",
+  sales: "מכירה",
+  general: "כללי",
+};
+
+export const CONVERSATION_TAG_COLORS: Record<ConversationTag, string> = {
+  claim: "bg-purple-100 text-purple-800",
+  retention: "bg-amber-100 text-amber-800",
+  sales: "bg-green-100 text-green-800",
+  general: "bg-slate-100 text-slate-800",
+};
+
+export const CONVERSATION_PRIORITY_LABELS: Record<ConversationPriority, string> = {
+  high: "דחוף",
+  medium: "רגיל",
+  low: "נמוך",
+};
+
+export interface ConversationMessage {
+  id: string;
+  direction: "inbound" | "outbound";
+  message: string;
+  timestamp: string;
+}
+
+export interface Conversation {
+  id: string;
+  customerName: string;
+  customerPhone: string;
+  customerId: string;
+  status: ConversationStatus;
+  tags: ConversationTag[];
+  priority: ConversationPriority;
+  lastMessage: string;
+  lastMessageTime: string;
+  unreadCount: number;
+  messages: ConversationMessage[];
+  linkedClaimId?: string;
+  linkedClaimNumber?: string;
+  linkedPolicyId?: string;
+  linkedPolicyNumber?: string;
+  createdAt: string;
+}
